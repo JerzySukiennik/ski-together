@@ -3,7 +3,7 @@
 
 import { generateTerrain, makeSampler, PISTE_OFF } from '../src/shared/terrain.js';
 import { SnowField, SNOW_W, SNOW_H } from '../src/shared/snowfield.js';
-import { cableProfile, sampleLine } from '../src/world/resort.js';
+import { cableProfile, liftSpecs, sampleLine } from '../src/world/resort.js';
 
 let failures = 0;
 const results = [];
@@ -241,17 +241,36 @@ const blueRun = terrain.runs.find((r) => r.key === 'blue');
 const dragBottom = blueRun.line[blueRun.line.length - 12];
 const dragMid = blueRun.line[Math.floor(blueRun.line.length * 0.70)];
 
+// Built from liftSpecs — the same object the game passes to `new Lift` — because
+// the previous version of this test typed the parameters in a second time and
+// left out `canSupport`. It measured a chairlift that does not exist.
+// KNOWN OPEN DEFECT — these four checks fail on purpose.
+//
+// The lift heights below are measured from liftSpecs, i.e. from the lifts the
+// game actually builds. The previous version of this test rebuilt them from
+// numbers typed in a second time and left out `canSupport`, so it measured a
+// chairlift with 39 pylons hugging the ground while the game shipped one with 14
+// and stretches of rope 38 m in the air. Jurek reported "both lifts too high" and
+// was told it was fixed. It was not; only the measurement was.
+//
+// The cause is routing, not the cable solver: the chairlift line runs up the
+// middle of the runs, so nearly every position the solver wants a pylon in is on
+// a piste and gets refused. Forcing a pylon in anyway puts hard obstacles in the
+// middle of the red — tests/collision.test.mjs catches that, and it is worse.
+// The fix is to route the line off the pistes, which moves the terminals and is a
+// design change, not a constant.
+//
+// Left red deliberately. A green suite over a defect Jurek can see is how this
+// got missed the first time.
+const SPECS = liftSpecs(terrain, s);
 for (const l of [
-  { name: 'chairlift', from: { x: terrain.stations.base.x + 16, z: terrain.stations.base.z - 14 },
-    to: { x: terrain.stations.summit.x + 4, z: terrain.stations.summit.z + 26 },
-    pylonSpacing: 88, clearance: 6.0, hanger: 3.58, seat: 1.04, limit: 9.5 },
-  { name: 'drag lift', from: { x: dragBottom[0] - 22, z: dragBottom[1] - 6 },
-    to: { x: dragMid[0] - 16, z: dragMid[1] },
-    pylonSpacing: 44, clearance: 4.4, hanger: 3.5, seat: 0, limit: 7.0 },
+  { name: 'chairlift', ...SPECS.chair, clearance: 6.0, limit: 9.5 },
+  { name: 'drag lift', ...SPECS.drag, clearance: 4.4, limit: 7.0 },
 ]) {
   const { pts, length } = sampleLine(s, l.from, l.to, 8);
   const spans = Math.max(2, Math.round(length / l.pylonSpacing));
-  const { heights, supports } = cableProfile(pts, length, spans, l.clearance);
+  const { heights, supports } = cableProfile(pts, length, spans, l.clearance,
+    { canSupport: l.canSupport });
   const clear = pts.map((p, i) => heights[i] - p.ground);
   const rider = clear.map((c) => c - l.hanger + l.seat);
   const min = Math.min(...clear), max = Math.max(...clear);

@@ -41,7 +41,12 @@ export function sampleLine(sampler, from, to, step = 10) {
  * everywhere, which is measurable rather than tuned.
  */
 export function cableProfile(pts, length, spans, clearance, {
-  maxClearance = clearance + 4.5,
+  // How much air the solver tolerates before it goes looking for somewhere to put
+  // another pylon. This is THE knob for "the lift hangs too high", and it is the
+  // one that should move — not the thresholds in the test. Tightening it only
+  // makes the solver work harder at positions it is already allowed to use; it
+  // never puts a pylon on a piste.
+  maxClearance = clearance + 2.2,
   // A pylon may not stand on a piste. Where a line crosses a run it spans it and
   // flies higher over it, which is what every real lift does and what every real
   // skier is grateful for.
@@ -331,6 +336,57 @@ export class Lift {
   }
 }
 
+/**
+ * Where the lifts run, and under what rules.
+ *
+ * One description, consumed by the game and by the acceptance test. The test used
+ * to rebuild the lifts from numbers typed in a second time and quietly left out
+ * `canSupport` — so it measured a chairlift with 39 pylons hugging the ground
+ * while the game shipped one with 16 and stretches of rope 38 m in the air. Both
+ * were reported as passing.
+ */
+export function liftSpecs(terrain, sampler) {
+  const base = terrain.stations.base;
+  const summit = terrain.stations.summit;
+
+  // A pylon in the middle of a run is a hazard nobody put there on purpose.
+  // Checking a small ring as well as the point keeps them off the shoulder too.
+  const offPiste = (x, z) => {
+    if (sampler.samplePiste(x, z) !== PISTE_OFF) return false;
+    for (const [dx, dz] of [[3, 0], [-3, 0], [0, 3], [0, -3]]) {
+      if (sampler.samplePiste(x + dx, z + dz) !== PISTE_OFF) return false;
+    }
+    return true;
+  };
+
+  const blue = terrain.runs.find((r) => r.key === 'blue');
+  const bottom = blue.line[blue.line.length - 12];
+  const mid = blue.line[Math.floor(blue.line.length * 0.70)];
+
+  return {
+    // The chair runs the full mountain. At a realistic 5 m/s this line would take
+    // four minutes, which is four minutes of nobody skiing, so it runs fast and
+    // says so: 14 m/s puts the ride at about a minute and a half.
+    chair: {
+      key: 'chair', kind: 'chair',
+      from: { x: base.x + 16, z: base.z - 14 },
+      to: { x: summit.x + 4, z: summit.z + 26 },
+      speed: 14, carrierSpacing: 46, pylonSpacing: 62,
+      pylonModel: 'lift_pylon', carrierModel: 'chair_five', stationModel: 'lift_station',
+      canSupport: offPiste, hanger: 3.58, seat: 1.04,
+    },
+    // The drag lift serves the bottom of the blue, one skier at a time.
+    drag: {
+      key: 'drag', kind: 'drag',
+      from: { x: bottom[0] - 22, z: bottom[1] - 6 },
+      to: { x: mid[0] - 16, z: mid[1] },
+      speed: 4.2, carrierSpacing: 22, pylonSpacing: 28,
+      pylonModel: 'drag_pylon', carrierModel: 'tbar', stationModel: null,
+      canSupport: offPiste, hanger: 3.5, seat: 0,
+    },
+  };
+}
+
 export class Resort {
   constructor(assets, terrain, sampler) {
     this.assets = assets;
@@ -545,55 +601,11 @@ export class Resort {
   }
 
   buildLifts() {
-    const base = this.terrain.stations.base;
-    const summit = this.terrain.stations.summit;
-    // A pylon in the middle of a run is a hazard nobody put there on purpose.
-    // Checking a small ring as well as the point keeps them off the shoulder too.
-    const offPiste = (x, z) => {
-      if (this.sampler.samplePiste(x, z) !== PISTE_OFF) return false;
-      for (const [dx, dz] of [[3, 0], [-3, 0], [0, 3], [0, -3]]) {
-        if (this.sampler.samplePiste(x + dx, z + dz) !== PISTE_OFF) return false;
-      }
-      return true;
-    };
-
-    // The chair runs the full mountain. At a realistic 5 m/s this line would take
-    // four minutes, which is four minutes of nobody skiing, so it runs fast and
-    // says so: 14 m/s puts the ride at about a minute and a half.
-    this.chair = new Lift(this.assets, this.sampler, {
-      key: 'chair',
-      kind: 'chair',
-      from: { x: base.x + 16, z: base.z - 14 },
-      to: { x: summit.x + 4, z: summit.z + 26 },
-      speed: 14,
-      carrierSpacing: 46,
-      pylonSpacing: 88,
-      pylonModel: 'lift_pylon',
-      carrierModel: 'chair_five',
-      stationModel: 'lift_station',
-      canSupport: offPiste,
-    });
+    const specs = liftSpecs(this.terrain, this.sampler);
+    this.chair = new Lift(this.assets, this.sampler, specs.chair);
     this.group.add(this.chair.group);
-
-    // The drag lift serves the bottom of the blue, one skier at a time.
-    const blue = this.terrain.runs.find((r) => r.key === 'blue');
-    const bottom = blue.line[blue.line.length - 12];
-    const mid = blue.line[Math.floor(blue.line.length * 0.70)];
-    this.drag = new Lift(this.assets, this.sampler, {
-      key: 'drag',
-      kind: 'drag',
-      from: { x: bottom[0] - 22, z: bottom[1] - 6 },
-      to: { x: mid[0] - 16, z: mid[1] },
-      speed: 4.2,
-      carrierSpacing: 22,
-      pylonSpacing: 44,
-      pylonModel: 'drag_pylon',
-      carrierModel: 'tbar',
-      stationModel: null,
-      canSupport: offPiste,
-    });
+    this.drag = new Lift(this.assets, this.sampler, specs.drag);
     this.group.add(this.drag.group);
-
     this.lifts = [this.chair, this.drag];
   }
 
