@@ -1,4 +1,4 @@
-import { SKIS, BOARDS, BOOTS, HELMETS, JACKETS, CONSUMABLES, gearFor, validateSet, TIER_NAMES } from '../gear/catalog.js';
+import { SKIS, BOARDS, HELMETS, JACKETS, CONSUMABLES, bootFor, gearFor, validateSet, TIER_NAMES } from '../gear/catalog.js';
 import { QUALITY_LEVELS } from '../core/engine.js';
 
 // The panels you walk into a building to open: the rental shop, the colour booth
@@ -29,7 +29,7 @@ export class Panels {
 
     this.draft = {
       board: 'ski-piste74',
-      boot: 'boot-ski',
+      boot: bootFor('ski-piste74'),
       helmet: 'helmet-rental',
       jacket: 'jacket-shell',
     };
@@ -129,6 +129,10 @@ export class Panels {
     }
     card.addEventListener('click', () => {
       this.draft[slot] = item.id;
+      // Boots are not a choice: ski boots do not go into snowboard bindings and
+      // nobody ever wanted to pick them separately. Taking a pair off the rack
+      // hands you the boots that fit it.
+      if (slot === 'board') this.draft.boot = bootFor(item.id);
       this.refreshRental();
     });
     return card;
@@ -160,7 +164,7 @@ export class Panels {
 
     body.appendChild(rack('Skis', 'On the rack by the window', SKIS, 'board'));
     body.appendChild(rack('Snowboards', 'On the wall', BOARDS, 'board'));
-    body.appendChild(rack('Boots', 'They have to match what you ride', BOOTS, 'boot'));
+
     body.appendChild(rack('Helmets', 'Not optional', HELMETS, 'helmet'));
     body.appendChild(rack('Jackets', 'Warmth, and nothing else', JACKETS.map((j) => ({
       ...j, short: j.name, tier: 0,
@@ -185,6 +189,11 @@ export class Panels {
 
   setSummary() {
     const b = gearFor(this.draft.board);
+    const boot = gearFor(this.draft.boot);
+    if (b && boot) {
+      return `${b.name} with ${boot.short.toLowerCase()} — ${b.turnRadius} m turns, `
+        + `${Math.round(b.topSpeed * 3.6)} km/h, grip ${Math.round(b.edgeGrip * 100)}.`;
+    }
     return `${b.name} — ${b.turnRadius} m turns, ${Math.round(b.topSpeed * 3.6)} km/h, grip ${Math.round(b.edgeGrip * 100)}.`;
   }
 

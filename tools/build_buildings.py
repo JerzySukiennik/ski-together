@@ -19,7 +19,8 @@
 #   * The origin sits on the ground at the centre of the footprint, because the
 #     resort drops each building at a sampled terrain height.
 
-import bpy, math, os
+import bpy, bmesh, math, os
+from mathutils import Matrix
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS = os.path.join(HERE, "assets", "models")
@@ -284,6 +285,19 @@ def main():
         bpy.data.objects.remove(o, do_unlink=True)
     bpy.ops.import_scene.gltf(filepath=GLB)
     keep = [o for o in bpy.context.scene.objects if o.name.startswith("groomer")]
+    # The groomer was modelled with its blade towards Blender +Y, which exports as
+    # -Z — and the game drives towards +Z. So it has been reversing down the
+    # mountain: blade at the back, tiller ploughing ahead of the cab, while the
+    # grooming code correctly assumed the tiller was behind. Same half turn the
+    # character needed, for the same reason.
+    for _g in keep:
+        _me = _g.data
+        _bm = bmesh.new()
+        _bm.from_mesh(_me)
+        bmesh.ops.rotate(_bm, verts=_bm.verts, cent=(0, 0, 0),
+                         matrix=Matrix.Rotation(math.pi, 3, 'Z'))
+        _bm.to_mesh(_me)
+        _bm.free()
     for o in list(bpy.context.scene.objects):
         top = o
         while top.parent is not None:

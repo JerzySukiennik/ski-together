@@ -482,7 +482,9 @@ export class Skier {
     const wish = _a.set(0, 0, 0);
     if (camYaw !== undefined) {
       const cf = _d.set(Math.sin(camYaw), 0, Math.cos(camYaw));
-      const cr = _g.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
+      // right = forward x up. With forward = (sin y, 0, cos y) that is
+      // (-cos y, 0, sin y). This had its exact negative, so D walked you left.
+      const cr = _g.set(-Math.cos(camYaw), 0, Math.sin(camYaw));
       wish.addScaledVector(cf, fx).addScaledVector(cr, sx);
       if (wish.lengthSq() > 1) wish.normalize();
       if (wish.lengthSq() > 0.01) {
@@ -606,8 +608,13 @@ export class Skier {
     // exactly as designed, but a player who skied down and looked behind them saw
     // nothing at all. A ski leaves a mark the FIRST time, and the day-long wear
     // has to be built out of marks you can see, not underneath them.
-    const wear = (7.0 + skid * 30 + braking * 24) * dose;
-    const cut = (12.0 + skid * 34 + braking * 26) * dose * (surf.kind === 'powder' ? 2.4 : 1);
+    // A ski does not shave a few percent off the corduroy — it destroys the
+    // tiller marks along its own width outright. Measured before this change, one
+    // clean pass took a groomed cell from 100% to 94% condition, which no amount
+    // of shading could show. A pass now leaves it about "skied", which is what
+    // snow looks like after one person has been down it.
+    const wear = (34 + skid * 70 + braking * 55) * dose;
+    const cut = (10 + skid * 46 + braking * 34) * dose * (surf.kind === 'powder' ? 2.4 : 1);
     if (this.stats.kind === 'ski') {
       const off = 0.17;
       this.world.snow.pass(this.pos.x - right.x * off, this.pos.z - right.z * off, radius, wear, cut);
@@ -615,6 +622,14 @@ export class Skier {
     } else {
       this.world.snow.pass(this.pos.x, this.pos.z, radius, wear, cut);
     }
+    // The rut itself is sixty centimetres wide, and measured from thirty metres up
+    // the hill that is one or two pixels — which is exactly why the track kept
+    // reading as "barely there" however dark the rut was made. What makes a real
+    // track visible from the chair is not the groove, it is the wider band of
+    // snow the skis scuff on either side of it: the tiller marks are gone there
+    // too, so the eye picks up a metre-wide stripe instead of a hairline. This
+    // pass wears that halo without cutting any depth into it.
+    this.world.snow.pass(this.pos.x, this.pos.z, radius * 3.4, wear * 0.42, 0);
   }
 
   updateComfort(dt, ctx) {

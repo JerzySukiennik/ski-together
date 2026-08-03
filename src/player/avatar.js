@@ -273,9 +273,13 @@ export class Avatar {
       // The V-step: tips splayed outwards, inside edges biting, weight rocking
       // from one ski to the other. This is how you cross the flat on skis.
       const swing = Math.sin(t);
-      const splay = this.kind === 'ski' ? 0.30 : 0.0;
-      this.hips.position.y = (HIP_Y - 0.10 - Math.abs(swing) * 0.03) * b;
-      set(this.torso, 0.40, -swing * 0.10, 0);
+      const splay = this.kind === 'ski' ? 0.44 : 0.0;
+      // Herringbone is a series of shoves, not a stroll: the body drops into each
+      // push and rises out of it, and the shoulders counter-rotate against the
+      // legs. Without that it reads as walking with skis on, which is what it did.
+      const drive = Math.abs(swing);
+      this.hips.position.y = (HIP_Y - 0.21 + drive * 0.12) * b;
+      set(this.torso, 0.54 - drive * 0.17, -swing * 0.28, swing * 0.08);
       set(this.head, -0.26, swing * 0.12, 0);
       this.legs.forEach(({ side, thigh, shin, boot }, i) => {
         const s2 = i === 0 ? swing : -swing;
@@ -294,9 +298,16 @@ export class Avatar {
       this.gear.position.y = 0;
       // Splay the skis themselves into the V.
       if (this.kind === 'ski') {
+        // Tips APART. skis[0] is the left ski, and a positive rotation about Y
+        // swings its tip to the right — inwards. This was building an A, not a V.
         this.skis.forEach((ski, i) => {
-          ski.rotation.y = (i === 0 ? 1 : -1) * splay;
-          ski.rotation.z = (i === 0 ? 1 : -1) * -0.22;
+          const side = i === 0 ? -1 : 1;          // left, right
+          ski.rotation.y = side * splay;
+          ski.rotation.z = side * 0.26;           // rolled onto the inside edge
+          // The pushing ski slides forward and lifts; the weighted one stays put.
+          const kick = i === 0 ? swing : -swing;
+          ski.position.z = 0.02 + Math.max(0, kick) * 0.40;
+          ski.position.y = 0.012 + Math.max(0, kick) * 0.05;
         });
       }
     } else if (name === 'walk') {

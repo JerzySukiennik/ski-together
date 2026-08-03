@@ -155,6 +155,13 @@ export function gearFor(id) {
   return byId.get(id) || null;
 }
 
+/** The boots that go with whatever you picked up off the rack. */
+export function bootFor(boardId) {
+  const b = gearFor(boardId);
+  if (!b) return null;
+  return b.kind === 'board' ? 'boot-board' : 'boot-ski';
+}
+
 /** A complete, legal set. The lift will not take you without one. */
 export function validateSet(set) {
   const missing = [];

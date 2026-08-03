@@ -414,11 +414,19 @@ export class Resort {
     const entry = { name, model, object: ob, x, y, z, rotY, box };
     this.buildings.push(entry);
     if (zone) {
-      // The doorway faces +Z in the model, so the zone sits just inside it.
+      // The doorway faces +Z in the model. The zone used to sit INSIDE the
+      // building, which is unreachable: the whole footprint is one solid collider,
+      // and the cafe's terrace inflates its bounding box right over the door. So
+      // the zone stands at the door, outside the box that stops you.
+      const size = box.getSize(new THREE.Vector3());
+      // The door faces the model's +Z, so after the rotation its outward normal
+      // is (sin rotY, 0, cos rotY). Stand the zone that way, clear of the box.
+      const clear = Math.max(size.z, size.x) * 0.44 + 2.6;
       const dx = Math.sin(rotY), dz = Math.cos(rotY);
       this.zones.push({
-        ...zone, name, x: x + dx * zone.depth, z: z + dz * zone.depth,
-        y, radius: zone.radius, building: entry,
+        ...zone, name, depth: clear,
+        x: x + dx * clear, z: z + dz * clear,
+        y, radius: Math.max(zone.radius, 5.5), building: entry,
       });
     }
     return entry;
@@ -738,12 +746,22 @@ export class LiftRide {
   exit() {
     if (!this.active) return;
     const lift = this.lift;
+    const carrierS = Math.min(this.carrier.s, lift.length);
     this.carrier.rider = null;
     this.carrier = null;
     this.lift = null;
     const s = this.skier;
-    const drop = lift.at(lift.length * 0.995);
-    s.pos.set(drop.x + 3, drop.ground, drop.z + 6);
+    // Where the carrier actually IS, not the end of the line. This used to read
+    // `lift.at(length * 0.995)`, so "get off early" put you at the top station
+    // however far up you had got — which is the opposite of what it says.
+    const along = THREE.MathUtils.clamp(carrierS, 0, lift.length);
+    const drop = lift.at(along);
+    const side = 3.2;
+    s.pos.set(
+      drop.x - lift.dir.y * side,
+      drop.ground,
+      drop.z + lift.dir.x * side,
+    );
     s.pos.y = s.groundAt(s.pos.x, s.pos.z);
     s.vel.set(0, 0, 0);
     s.mode = MODE.WALK;

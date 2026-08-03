@@ -295,9 +295,12 @@ uniform float uFogDensity;
 uniform float uWorld;
 uniform float uHalf;
 uniform float uHMin;
+uniform float uHRes;
 uniform float uHRange;
 uniform vec2 uSnowSize;
 uniform float uCarveMax;
+uniform vec2 uSnowCells;
+uniform float uSnowCellSize;
 uniform float uDetail;
 uniform float uTime;
 
@@ -328,9 +331,30 @@ float vnoise(vec2 p) {
              mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
-float heightAt(vec2 world) {
-  vec4 c = texture2D(uHeight, (world + uHalf) / uWorld);
+float decodeH(vec4 c) {
   return uHMin + (c.r * 65536.0 + c.g * 256.0 + c.b) * (255.0 / 16777215.0) * uHRange;
+}
+
+float heightAt(vec2 world) {
+  return decodeH(texture2D(uHeight, (world + uHalf) / uWorld));
+}
+
+// The same field, interpolated. The height texture is 24-bit packed so it has to
+// be sampled NEAREST — which makes heightAt() a staircase with 1.5 m steps. That
+// is fine for a single lookup and fatal for a ray march: as the camera moves each
+// sample jumps a whole step, the shadow test flips, and patches of the mountain
+// flicker. Doing the bilinear by hand costs four taps and removes it.
+float heightSmooth(vec2 world) {
+  vec2 f = (world + uHalf) / uWorld * uHRes - 0.5;
+  vec2 base = floor(f);
+  vec2 frac = f - base;
+  vec2 texel = 1.0 / vec2(uHRes);
+  vec2 uv = (base + 0.5) * texel;
+  float h00 = decodeH(texture2D(uHeight, uv));
+  float h10 = decodeH(texture2D(uHeight, uv + vec2(texel.x, 0.0)));
+  float h01 = decodeH(texture2D(uHeight, uv + vec2(0.0, texel.y)));
+  float h11 = decodeH(texture2D(uHeight, uv + texel));
+  return mix(mix(h00, h10, frac.x), mix(h01, h11, frac.x), frac.y);
 }
 
 // How much of the sky this patch can actually see. Snow is lit almost entirely by
@@ -358,12 +382,16 @@ float sunShadow(vec2 world, float h) {
   if (flat_ < 1e-3) return 0.0;
   sd /= flat_;
   float rise = uSunDir.y / flat_;
+  // Averaged, not maxed. A hard max over five sparse samples means one sample
+  // crossing a ridge flips the whole pixel from lit to shadowed, which is the
+  // other half of the flicker. Averaging lets a sample fade in.
   float over = 0.0;
-  for (int i = 1; i <= 5; i++) {
-    float t = float(i) * float(i) * 2.2; // 2.2 .. 55 m, dense where it matters
-    over = max(over, (heightAt(world + sd * t) - (h + rise * t)) / t);
+  for (int i = 1; i <= 6; i++) {
+    float t = float(i) * float(i) * 1.6; // 1.6 .. 58 m, dense where it matters
+    float d = (heightSmooth(world + sd * t) - (h + rise * t)) / t;
+    over += smoothstep(0.004, 0.10, d);
   }
-  return smoothstep(0.004, 0.085, over);
+  return clamp(over / 3.4, 0.0, 1.0);
 }
 
 vec3 ggx(vec3 N, vec3 V, vec3 L, float rough, vec3 F0) {
@@ -400,14 +428,21 @@ void main() {
 
   // The rut's own shape, from the gradient of the carve field. This is what makes
   // a track read as a groove rather than a stain.
-  vec2 px = 1.0 / uSnowSize;
+  //
+  // These taps have to be ONE CELL apart, not one metre. uSnowSize is in metres,
+  // so the old 1.0/uSnowSize straddled two cells either side — a full two metres
+  // across, while a ski rut is sixty centimetres wide. The gradient of a groove
+  // sampled from outside the groove is zero, so the walls never formed and every
+  // track came out as a flat pale smudge instead of a cut in the snow.
+  vec2 px = 1.0 / uSnowCells;
   float cl = texture2D(uCarve, clamp(vSnowUv - vec2(px.x, 0.0), 0.0, 1.0)).r;
   float cr = texture2D(uCarve, clamp(vSnowUv + vec2(px.x, 0.0), 0.0, 1.0)).r;
   float cd = texture2D(uCarve, clamp(vSnowUv - vec2(0.0, px.y), 0.0, 1.0)).r;
   float cu = texture2D(uCarve, clamp(vSnowUv + vec2(0.0, px.y), 0.0, 1.0)).r;
-  // Two snow cells apart is 1 m of ground, so the height difference across the
-  // tap IS the slope — no extra scaling needed.
-  vec3 carveN = normalize(vec3((cl - cr) * uCarveMax, 1.0, (cd - cu) * uCarveMax));
+  // The taps are one cell — half a metre — apart, so the slope across the tap is
+  // the depth difference over that half metre.
+  float rise = uCarveMax / uSnowCellSize;
+  vec3 carveN = normalize(vec3((cl - cr) * rise, 1.0, (cd - cu) * rise));
 
   // A four-centimetre rut across a metre of ground is a two-degree tilt, which is
   // nothing. Exaggerating the groove's own normal is what turns the depth data
@@ -437,7 +472,9 @@ void main() {
   float groom = sin(vWorld.y * 74.0);
   // Corduroy survives nothing: the first ski across a groomed line wipes the
   // tiller marks out, which is half of why a fresh track shows up at all.
-  float crisp = smoothstep(0.72, 0.995, cond) * (1.0 - smoothstep(0.0, 0.10, carve)) * pisteMask;
+  // Sharper than it was: the difference between "groomed" and "one skier has been
+  // down this" should be a clean edge, because in reality it is.
+  float crisp = smoothstep(0.80, 0.99, cond) * (1.0 - smoothstep(0.0, 0.08, carve)) * pisteMask;
   // Where the ground is nearly level the fall line has no direction to speak of,
   // so it spins with the noise in the normal — and a sine wave whose direction
   // spins draws interference rings. The whole plaza was covered in swirls. Fade
@@ -487,13 +524,19 @@ void main() {
   // measured, and correct. So the mark cannot come from the depth: it comes from
   // the snow in it being packed, polished and stripped of tiller marks. The ramp
   // saturates at a carve of 0.035, which is what a single pass actually leaves.
-  float track = smoothstep(0.0, 0.035, carve);
-  albedo = mix(albedo, iceAlbedo, track * 0.42);
-  albedo *= 1.0 - track * 0.09;
+  // Measured A/B against a clean slope: the old version of this changed the
+  // picture, but it changed it in the WRONG DIRECTION — the rut came out as a
+  // pale smudge, brighter than the snow around it, because dropping roughness
+  // raised the specular term faster than the albedo mix lowered the diffuse one.
+  // A rut in snow is darker than the field it cuts through: it is shaded by its
+  // own walls and the tiller marks that were catching the light are gone.
+  float track = smoothstep(0.004, 0.045, carve);
+  albedo = mix(albedo, iceAlbedo, track * 0.55);
+  albedo *= 1.0 - track * 0.14;
 
   float rough = mix(0.62, 0.13, ice);
   rough = mix(rough, 0.88, powder);
-  rough = mix(rough, rough * 0.55, track); // a ski polishes what it runs over
+  rough = mix(rough, rough * 0.82, track); // a ski polishes what it runs over
 
   // ---- how much light can reach here at all
   // Both of these fade out with distance: past a few hundred metres the haze has
@@ -517,7 +560,10 @@ void main() {
   float ndl = (dot(N, L) + wrap) / (1.0 + wrap);
   ndl = max(ndl, 0.0) * (1.0 - shadow * 0.92);
 
-  float ao = (1.0 - carve * 0.42) * (1.0 - occ * 0.80);
+  // The rut is a trench half a metre wide: most of the sky it could see is
+  // blocked by its own walls, and that self-shadow is most of why a track
+  // reads at all from any distance.
+  float ao = (1.0 - carve * 0.42) * (1.0 - track * 0.20) * (1.0 - occ * 0.80);
   float sky = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
   vec3 ambient = mix(uGroundColour, uSkyColour, sky) * ao;
   // Snow bounces a lot of what hits it, so the ambient term still carries weight —
@@ -600,6 +646,8 @@ export class TerrainMesh {
         uHRange: { value: H_RANGE },
         uSnowOrigin: { value: new THREE.Vector2(SNOW_X0, SNOW_Z0) },
         uSnowSize: { value: new THREE.Vector2(SNOW_W * SNOW_CELL, SNOW_H * SNOW_CELL) },
+        uSnowCells: { value: new THREE.Vector2(SNOW_W, SNOW_H) },
+        uSnowCellSize: { value: SNOW_CELL },
         uCarveMax: { value: CARVE_MAX },
         uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.5) },
         uSunColour: { value: new THREE.Color(1.0, 0.96, 0.88) },
