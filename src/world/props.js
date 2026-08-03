@@ -288,6 +288,12 @@ export class TreeField {
  * gates and rails the features asked for, netting on the corners where a mistake
  * would put you in the trees, and signage where runs part company.
  */
+const _up = new THREE.Vector3(0, 1, 0);
+const _tmpUp = new THREE.Vector3();
+const _tmpQ = new THREE.Quaternion();
+const _tmpPos = new THREE.Vector3();
+const _tmpScale = new THREE.Vector3();
+
 export class PisteFurniture {
   constructor(assets, terrain, sampler) {
     this.group = new THREE.Group();
@@ -297,24 +303,47 @@ export class PisteFurniture {
     this.sampler = sampler;
     this.gates = [];
     this.rails = [];
+    this.batches = {};
     this.build();
+    this.flush();
   }
 
+  /**
+   * Record a placement rather than clone an object. Three hundred marker poles as
+   * three hundred objects is six hundred draw calls before a single tree — and
+   * draw calls, not triangles, are what a 4 GB card runs out of first.
+   */
   place(name, x, z, rotY = 0, scale = 1, yOffset = 0, tiltToSlope = false) {
-    const ob = this.assets.instance(name);
     const y = this.sampler.sampleHeight(x, z);
-    ob.position.set(x, y + yOffset, z);
-    ob.rotation.y = rotY;
-    ob.scale.setScalar(scale);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
     if (tiltToSlope) {
       const n = this.sampler.sampleNormal(x, z, 2);
-      const up = new THREE.Vector3(n[0], n[1], n[2]);
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
-      ob.quaternion.premultiply(q);
-      ob.rotateY(rotY);
+      q.setFromUnitVectors(_up, _tmpUp.set(n[0], n[1], n[2]));
+      q.multiply(_tmpQ.setFromAxisAngle(_up, rotY));
+    } else {
+      q.setFromAxisAngle(_up, rotY);
     }
-    this.group.add(ob);
-    return ob;
+    m.compose(_tmpPos.set(x, y + yOffset, z), q, _tmpScale.setScalar(scale));
+    (this.batches[name] ||= []).push(m);
+    return { position: { x, y: y + yOffset, z }, matrix: m };
+  }
+
+  /** Turn the recorded placements into one instanced mesh per primitive. */
+  flush() {
+    for (const name in this.batches) {
+      const matrices = this.batches[name];
+      for (const prim of this.assets.primitives(name)) {
+        const im = new THREE.InstancedMesh(prim.geometry, prim.material, matrices.length);
+        im.castShadow = true;
+        im.receiveShadow = true;
+        im.frustumCulled = false;
+        for (let i = 0; i < matrices.length; i++) im.setMatrixAt(i, matrices[i]);
+        im.instanceMatrix.needsUpdate = true;
+        this.group.add(im);
+      }
+    }
+    this.batches = {};
   }
 
   build() {
@@ -352,11 +381,11 @@ export class PisteFurniture {
           this.gates.push({ x, z, y: pole.position.y, feature: f, index: k, side, taken: false, t });
         }
       } else if (f.type === 'rail') {
-        const ob = this.place('park_rail', f.x, f.z, heading, f.length / 12, 0.05, true);
-        this.rails.push({ x: f.x, z: f.z, dir: f.dir, length: f.length, height: f.height, feature: f, object: ob });
+        this.place('park_rail', f.x, f.z, heading, f.length / 12, 0.05, true);
+        this.rails.push({ x: f.x, z: f.z, dir: f.dir, length: f.length, height: f.height, feature: f });
       } else if (f.type === 'box') {
-        const ob = this.place('park_box', f.x, f.z, heading, 1, 0.02, true);
-        this.rails.push({ x: f.x, z: f.z, dir: f.dir, length: f.length, height: f.height, feature: f, object: ob, box: true });
+        this.place('park_box', f.x, f.z, heading, 1, 0.02, true);
+        this.rails.push({ x: f.x, z: f.z, dir: f.dir, length: f.length, height: f.height, feature: f, box: true });
       }
     }
 
