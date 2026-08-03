@@ -404,7 +404,15 @@ export class Resort {
     this.buildLifts();
   }
 
-  addBuilding(model, x, z, rotY, { name, zone }) {
+  /**
+   * @param face  either a rotation in radians, or a point the door should face.
+   *              Prefer the point: a door is only a door if you can walk into it
+   *              from where people actually are.
+   */
+  addBuilding(model, x, z, face, { name, zone }) {
+    const rotY = typeof face === 'number'
+      ? face
+      : Math.atan2(face.x - x, face.z - z) + (face.skew ?? 0);
     const ob = this.assets.instance(model);
     const y = this.sampler.sampleHeight(x, z);
     ob.position.set(x, y, z);
@@ -434,15 +442,24 @@ export class Resort {
 
   buildBase() {
     const base = this.terrain.stations.base;
-    // Everything faces the mountain, which is towards -z from the base station.
-    const face = Math.PI;
-    this.addBuilding('bld_rental', base.x - 47, base.z + 22, face + 0.16,
+    // These used to be turned to face the mountain, which reads well in a
+    // screenshot and is wrong in every other way: the player arrives from the
+    // far side of the plaza, so every door pointed at the back of the building
+    // they were walking towards. Measured from the spawn, all four doors sat
+    // 125-176 degrees away from the approach, and walking at the shop stopped
+    // you dead against its rear wall seventeen metres short of the prompt.
+    //
+    // A door faces the people. The plaza here is the ground between the base
+    // station and where you arrive, so that is what they all look at, with a
+    // little skew each so the row does not read as a wall of identical fronts.
+    const plaza = { x: base.x, z: base.z + 52 };
+    this.addBuilding('bld_rental', base.x - 47, base.z + 22, { ...plaza, skew: 0.16 },
       { name: 'rental', zone: { kind: 'rental', depth: -7.5, radius: 7.5 } });
-    this.addBuilding('bld_cafe', base.x + 46, base.z + 26, face - 0.2,
+    this.addBuilding('bld_cafe', base.x + 46, base.z + 26, { ...plaza, skew: -0.2 },
       { name: 'cafe', zone: { kind: 'cafe', depth: -7.0, radius: 8.0 } });
-    this.addBuilding('bld_booth', base.x - 12, base.z + 44, face + 0.05,
+    this.addBuilding('bld_booth', base.x - 12, base.z + 44, { ...plaza, skew: 0.05 },
       { name: 'booth', zone: { kind: 'booth', depth: -3.4, radius: 4.4 } });
-    this.addBuilding('bld_garage', base.x + 92, base.z - 4, face - 1.15,
+    this.addBuilding('bld_garage', base.x + 92, base.z - 4, { ...plaza, skew: -0.35 },
       { name: 'garage', zone: { kind: 'garage', depth: -11, radius: 11 } });
 
     // A bonfire outside, because somebody has to stand around it after dark.
@@ -481,7 +498,9 @@ export class Resort {
     this.solidProps.push({ x: fx, z: fz, r: 1.7, kind: 'fire', hard: false, top: fire.position.y + 1.4 });
     this.zones.push({ kind: 'fire', name: 'bonfire', x: fx, z: fz, y: fire.position.y, radius: 5.5 });
 
-    this.dressBase(base, face);
+    // The props (map board, ticket window, benches) still face the mountain the
+    // way they always did — nobody walks into a bench.
+    this.dressBase(base, Math.PI);
 
     // Floodlight masts along the lower runs, for the evening.
     this.floodlights = [];

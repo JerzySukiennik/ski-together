@@ -10,11 +10,16 @@
 // so the rut you feel under the ski is the same rut you see. Nothing regenerates
 // on its own: the only way snow comes back is a player driving the groomer.
 
+// The grid covers the WHOLE terrain, not a box around the pistes. It used to be
+// 1024 x 1280 m against a 1536 m world, which is 56% of the mountain — so the
+// base plaza, the spawn point and every wide off-piste line lay outside it and
+// took no tracks at all. Snow you can stand on and not mark is worse than no
+// snow system, because the player finds the seam and stops trusting any of it.
 export const SNOW_CELL = 0.5; // metres
-export const SNOW_W = 2048; // cells, x
-export const SNOW_H = 2560; // cells, z
-export const SNOW_X0 = -512; // world x of cell 0
-export const SNOW_Z0 = -640; // world z of cell 0
+export const SNOW_W = 3072; // cells, x — 1536 m
+export const SNOW_H = 3072; // cells, z — 1536 m
+export const SNOW_X0 = -768; // world x of cell 0
+export const SNOW_Z0 = -768; // world z of cell 0
 export const CARVE_MAX = 0.28; // metres of rut at carve = 255
 
 export const COND_GROOMED = 255;

@@ -198,6 +198,7 @@ uniform float uHRange;
 uniform vec2 uSnowOrigin;
 uniform vec2 uSnowSize;
 uniform float uCarveMax;
+uniform vec2 uSnowCells;
 
 varying vec3 vWorld;
 varying vec2 vSnowUv;
@@ -252,7 +253,13 @@ float sampleHeight(vec2 world) {
 }
 
 void main() {
+  // Each ring must sit on its OWN world grid. uCentre snaps to the finest cell,
+  // so without this the 32 m ring was being dragged half a metre at a time and
+  // resampled the far hillside on every step — which is the shimmer you see in
+  // the distance while moving. Snapping per ring means a coarse ring only ever
+  // moves in whole coarse cells, and stands perfectly still in between.
   vec2 world = position.xz + uCentre;
+  world = floor(world / aCell + 0.5) * aCell;
 
   // Clipmap stitch: vertices on the outer edge of a ring snap onto the coarser
   // ring's grid, so the two levels share the exact same edge and never crack.
@@ -264,7 +271,20 @@ void main() {
 
   vec2 snowUv = (world - uSnowOrigin) / uSnowSize;
   float inside = step(0.0, snowUv.x) * step(snowUv.x, 1.0) * step(0.0, snowUv.y) * step(snowUv.y, 1.0);
-  float carve = texture2D(uCarve, clamp(snowUv, 0.0, 1.0)).r * inside;
+  // The vertex grid snaps to a 0.5 m cell as the camera moves, and a ski rut is
+  // 0.5 m wide — exactly the grid's Nyquist limit. Displacing from a single tap
+  // meant each snap dropped the vertices into a different part of the rut, and
+  // the ground under the skis boiled. The DISPLACEMENT therefore reads a field
+  // smoothed over about a metre, which the grid can represent honestly; the rut
+  // keeps its sharp edges in the shading, where there is no sampling grid to
+  // fight with.
+  vec2 sp = 1.0 / uSnowCells;
+  float carve = (
+      texture2D(uCarve, clamp(snowUv, 0.0, 1.0)).r * 2.0
+    + texture2D(uCarve, clamp(snowUv + vec2(sp.x, 0.0), 0.0, 1.0)).r
+    + texture2D(uCarve, clamp(snowUv - vec2(sp.x, 0.0), 0.0, 1.0)).r
+    + texture2D(uCarve, clamp(snowUv + vec2(0.0, sp.y), 0.0, 1.0)).r
+    + texture2D(uCarve, clamp(snowUv - vec2(0.0, sp.y), 0.0, 1.0)).r) / 6.0 * inside;
   // A rut is 0.5 m wide. Displacing a 32 m vertex by it punches a crater you can
   // see from the far side of the valley — and fall into. Fade the displacement
   // out as the cells get bigger than the feature they represent.
