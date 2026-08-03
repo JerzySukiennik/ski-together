@@ -198,64 +198,83 @@ made.append(build("tbar", [STEEL, RUBBER, PAINT_Y], tbar))
 
 
 def station(bm):
-    """A terminal you can ski into: flat deck at snow level, horizontal bullwheel
-    turning the rope through 180 degrees, a canopy over the loading point and a
-    corral that funnels the queue to the place the chair arrives."""
+    """A terminal you can ski into.
+
+    Rendered on its own (tools/render_models.py) the previous version read as a
+    pile of loose parts: a canopy floating on nothing, a machine house too small
+    to see, and a corral straggling off into space. The fix is not more detail —
+    it is closing the thing up. Columns run to the deck, the house is clad, and
+    the corral is short and attached.
+    """
     L, W = 15.0, 8.0
+
     # deck, barely above the snow so skis slide straight on
     box(bm, (0, 0, 0.09), (W, L, 0.18), mi=4)
     box(bm, (0, 0, 0.20), (W - 0.5, L - 0.5, 0.06), mi=5)
-    # ramp on the approach side so you glide up rather than step up
     for k in range(6):
         t = k / 5
         box(bm, (0, -L / 2 - 1.6 + t * 1.6, 0.03 + t * 0.15), (W - 0.6, 0.34, 0.06), mi=5)
 
-    # four columns carrying the head frame
+    # Four columns, full height, standing ON the deck — the canopy used to hang in
+    # the air above legs that stopped short.
     for sx in (-1, 1):
         for sy in (-1, 1):
-            tube(bm, (sx * (W / 2 - 0.7), sy * (L / 2 - 1.2), 0.15),
-                 (sx * (W / 2 - 0.7), sy * (L / 2 - 1.2), CABLE_H + 1.6), 0.20, 0.17, seg=10, mi=1)
+            tube(bm, (sx * (W / 2 - 0.7), sy * (L / 2 - 1.2), 0.18),
+                 (sx * (W / 2 - 0.7), sy * (L / 2 - 1.2), CABLE_H + 1.7), 0.22, 0.18, seg=10, mi=1)
+            # knee braces, so the frame reads as a frame
+            tube(bm, (sx * (W / 2 - 0.7), sy * (L / 2 - 1.2), CABLE_H + 0.1),
+                 (sx * (W / 2 - 1.9), sy * (L / 2 - 1.2), CABLE_H + 1.6), 0.10, 0.10, seg=8, mi=1)
     for sx in (-1, 1):
-        box(bm, (sx * (W / 2 - 0.7), 0, CABLE_H + 1.55), (0.24, L - 2.0, 0.26), mi=1)
+        box(bm, (sx * (W / 2 - 0.7), 0, CABLE_H + 1.62), (0.26, L - 2.0, 0.28), mi=1)
+    box(bm, (0, L / 2 - 1.2, CABLE_H + 1.62), (W - 1.0, 0.26, 0.28), mi=1)
+    box(bm, (0, -L / 2 + 1.2, CABLE_H + 1.62), (W - 1.0, 0.26, 0.28), mi=1)
 
     # the bullwheel: HORIZONTAL, at cable height, at the far end
     cy = L / 2 - 2.6
     disc(bm, (0, cy, CABLE_H), 2.45, 0.30, mi=3, seg=36)
-    disc(bm, (0, cy, CABLE_H), 2.60, 0.10, mi=1, seg=36)     # rope groove rim
-    tube(bm, (0, cy, CABLE_H - 1.4), (0, cy, CABLE_H + 1.4), 0.22, 0.22, seg=14, mi=1)
+    disc(bm, (0, cy, CABLE_H), 2.60, 0.10, mi=1, seg=36)
+    tube(bm, (0, cy, CABLE_H - 1.6), (0, cy, CABLE_H + 1.5), 0.24, 0.24, seg=14, mi=1)
     for k in range(8):
         a = k * math.tau / 8
         tube(bm, (0, cy, CABLE_H), (math.cos(a) * 2.2, cy + math.sin(a) * 2.2, CABLE_H),
              0.075, 0.075, seg=6, mi=1)
-    # drive housing above it
-    box(bm, (0, cy, CABLE_H + 1.9), (2.4, 2.4, 0.9), mi=0)
-    box(bm, (0, cy, CABLE_H + 2.45), (2.7, 2.7, 0.22), mi=6)
 
-    # canopy over the loading point (the near end)
-    box(bm, (0, -L / 2 + 3.2, CABLE_H + 1.85), (W + 1.6, 7.0, 0.20), mi=6)
-    box(bm, (0, -L / 2 + 3.2, CABLE_H + 2.02), (W + 1.7, 7.1, 0.14), mi=7)
-
-    # operator hut to one side
-    box(bm, (W / 2 + 1.1, -L / 2 + 2.4, 1.35), (2.0, 2.2, 2.3), mi=8)
-    box(bm, (W / 2 + 1.1, -L / 2 + 1.35, 1.75), (1.6, 0.10, 1.1), mi=9)
-    box(bm, (W / 2 + 1.1, -L / 2 + 2.4, 2.62), (2.3, 2.5, 0.16), mi=6)
-
-    # queue corral funnelling to where the chair arrives
+    # Machine house: clad on all four sides and big enough to see, sitting over the
+    # wheel where the drive actually lives.
+    box(bm, (0, cy, CABLE_H + 2.15), (5.6, 5.0, 1.5), mi=0)
+    box(bm, (0, cy, CABLE_H + 2.98), (6.1, 5.5, 0.24), mi=6)
+    box(bm, (0, cy, CABLE_H + 3.14), (6.2, 5.6, 0.16), mi=7)
     for sx in (-1, 1):
-        for k in range(5):
-            y = -L / 2 - 2.0 - k * 2.2
-            x = sx * (2.0 + k * 0.55)
-            tube(bm, (x, y, 0.0), (x, y, 1.05), 0.045, 0.040, seg=8, mi=2)
+        box(bm, (sx * 1.6, cy - 2.55, CABLE_H + 2.2), (1.6, 0.10, 0.7), mi=9)  # louvres
+
+    # canopy over the loading point, carried by the same frame
+    box(bm, (0, -L / 2 + 3.4, CABLE_H + 1.9), (W + 1.4, 7.2, 0.22), mi=6)
+    box(bm, (0, -L / 2 + 3.4, CABLE_H + 2.07), (W + 1.5, 7.3, 0.14), mi=7)
+
+    # operator hut, against the deck rather than beside it
+    box(bm, (W / 2 - 0.9, -L / 2 + 2.4, 1.35), (2.2, 2.4, 2.3), mi=8)
+    box(bm, (W / 2 - 0.9, -L / 2 + 1.25, 1.75), (1.7, 0.12, 1.1), mi=9)
+    box(bm, (W / 2 - 0.9, -L / 2 + 2.4, 2.60), (2.5, 2.7, 0.18), mi=6)
+
+    # A short, attached corral. The old one ran eleven metres off the back of the
+    # deck and read as debris.
+    for sx in (-1, 1):
+        for k in range(3):
+            y = -L / 2 - 0.6 - k * 1.9
+            x = sx * (2.2 + k * 0.5)
+            tube(bm, (x, y, 0.0), (x, y, 1.05), 0.05, 0.045, seg=8, mi=2)
+            px = sx * (2.2 + (k - 1) * 0.5)
+            py = -L / 2 - 0.6 - (k - 1) * 1.9
             if k:
-                py = -L / 2 - 2.0 - (k - 1) * 2.2
-                px = sx * (2.0 + (k - 1) * 0.55)
-                tube(bm, (px, py, 0.95), (x, y, 0.95), 0.028, 0.028, seg=6, mi=2)
+                tube(bm, (px, py, 0.95), (x, y, 0.95), 0.03, 0.03, seg=6, mi=2)
+            else:
+                tube(bm, (sx * 2.2, -L / 2 + 0.3, 0.95), (x, y, 0.95), 0.03, 0.03, seg=6, mi=2)
+
     # the gate line the game boards you at
-    box(bm, (0, -L / 2 + 0.4, 1.0), (W - 1.0, 0.12, 0.10), mi=2)
+    box(bm, (0, -L / 2 + 0.4, 1.0), (W - 1.0, 0.14, 0.12), mi=2)
     for k in range(4):
-        box(bm, (-2.7 + k * 1.8, -L / 2 + 0.4, 0.5), (0.09, 0.09, 1.0), mi=2)
-    # a lamp so the terminal reads at night
-    box(bm, (0, -L / 2 + 1.0, CABLE_H + 1.6), (1.2, 0.3, 0.18), mi=10)
+        box(bm, (-2.7 + k * 1.8, -L / 2 + 0.4, 0.5), (0.10, 0.10, 1.0), mi=2)
+    box(bm, (0, -L / 2 + 1.0, CABLE_H + 1.6), (1.4, 0.32, 0.20), mi=10)
 
 
 made.append(build("lift_station",

@@ -223,28 +223,46 @@ export class MainMenu {
     const actions = el('div', 'menu__actions');
     const play = el('button', 'btn btn--primary btn--big', 'Ski');
     play.addEventListener('click', () => this.play());
-    const rooms = el('button', 'btn', 'Rooms');
-    rooms.addEventListener('click', () => g.panels.open('menu'));
+    // Both used to open the same panel under two different names, which teaches
+    // the player a vocabulary that is not true.
+    const rooms = el('button', 'btn', 'Play together');
+    rooms.addEventListener('click', () => g.panels.open('menu', 'rooms'));
     const settings = el('button', 'btn', 'Settings');
-    settings.addEventListener('click', () => g.panels.open('menu'));
+    settings.addEventListener('click', () => g.panels.open('menu', 'settings'));
     actions.append(play, rooms, settings);
     plate.appendChild(actions);
 
-    const facts = el('ul', 'menu__facts');
-    for (const [k, v] of [
-      ['Runs', '3'],
-      ['Vertical', `${Math.round(g.terrain.runs[0].topElev - g.terrain.runs[0].bottomElev)} m`],
-      ['Snow cells', '5.2 M'],
-      ['Players', '1–5'],
-    ]) {
-      const li = el('li');
-      li.append(el('span', 't-label', k), el('span', 'menu__fact t-num', v));
-      facts.appendChild(li);
+    // The board at the bottom of every real resort: which runs there are, how
+    // long, how steep, and whether they are open. It replaces a row of headline
+    // numbers that included "Snow cells — 5.2 M", which is a term out of the
+    // source code and means nothing to anyone standing at the lift.
+    const board = el('div', 'pistes');
+    const head = el('div', 'pistes__head');
+    head.append(el('span', 't-label', 'Pistes'), el('span', 'pistes__state', 'All open'));
+    board.appendChild(head);
+
+    const list = el('ul', 'pistes__list');
+    for (const run of g.terrain.runs) {
+      const grade = (run.topElev - run.bottomElev) / run.length;
+      const li = el('li', `pistes__run pistes__run--${run.key}`);
+      li.append(
+        el('i', 'pistes__chip'),
+        el('span', 'pistes__name', run.name),
+        el('span', 'pistes__len t-num', `${(run.length / 1000).toFixed(1)} km`),
+        el('span', 'pistes__grade t-num', `${Math.round(grade * 100)}%`),
+      );
+      list.appendChild(li);
     }
-    plate.appendChild(facts);
+    board.appendChild(list);
+
+    const foot = el('p', 'pistes__foot',
+      `${Math.round(g.terrain.runs[0].topElev - g.terrain.runs[0].bottomElev)} m of vertical, `
+      + 'one chairlift, one drag lift. Up to five of you.');
+    board.appendChild(foot);
+    plate.appendChild(board);
     this.node.appendChild(plate);
 
-    this.node.appendChild(el('div', 'menu__hint', 'Move the mouse to look around · Esc for controls'));
+    this.node.appendChild(el('div', 'menu__hint', 'Move the mouse to look around'));
 
     this.root.appendChild(this.node);
     window.addEventListener('mousemove', this._onMove);

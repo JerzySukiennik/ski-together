@@ -24,7 +24,11 @@
   --sun: #ffb23f;
   --ice: #7fb4d8;
 
-  --panel: rgba(12, 18, 25, 0.82);
+  /* Opaque enough to carry its own contrast. The HUD was tuned against a dark
+     sky; the game is played on white snow, where a translucent plate stops being
+     a plate and the type ends up sitting on the piste. */
+  --panel: rgba(11, 17, 24, 0.90);
+  --plate-edge: 0 0 0 1px rgba(6, 10, 15, 0.45), 0 6px 22px rgba(6, 10, 15, 0.28);
   --panel-solid: #101923;
   --hairline: rgba(242, 245, 248, 0.16);
   --hairline-strong: rgba(242, 245, 248, 0.34);
@@ -244,9 +248,17 @@ html, body {
 
 /* Riding: everything shrinks, and the things you do not read at speed fade back.
    The speed itself stays legible, because that one IS read at speed. */
-.hud--riding .rail { opacity: 0.5; }
-.hud--riding .board { opacity: 0.42; }
-.hud--riding .vitals { opacity: 0.55; }
+/* Riding used to fade whole panels to 42%, background included, which is why
+   nothing but the speed could be read on the piste. A sign gets smaller as it
+   recedes; it does not turn transparent. So the plates keep their contrast and
+   only the rows you genuinely do not read at 66 km/h step back. */
+.hud--riding .board__roster,
+.hud--riding .board__clock,
+.hud--riding .rail__tick,
+.hud--riding .rail__label,
+.hud--riding .bar .t-label { opacity: 0.55; }
+.hud--riding .rail { opacity: 0.92; }
+.hud--riding .board { opacity: 0.92; }
 
 .hud::after {
   content: '';
@@ -285,11 +297,11 @@ html, body {
   gap: 6px;
   /* Thin light lines vanish against a white mountain. The plate is what makes
      the rail readable at midday on a groomed piste. */
-  background: linear-gradient(180deg, rgba(10, 15, 21, 0.62), rgba(10, 15, 21, 0.44));
-  backdrop-filter: blur(7px);
+  background: linear-gradient(180deg, rgba(10, 15, 21, 0.90), rgba(10, 15, 21, 0.80));
   border: 1px solid var(--hairline);
   border-left: var(--band) solid var(--corduroy);
   border-radius: var(--radius);
+  box-shadow: var(--plate-edge);
 }
 
 .rail__label {
@@ -342,14 +354,25 @@ html, body {
 
 /* ---- vitals, hung under the rail */
 
+/* The last readout without a plate of its own, and the only one still unreadable
+   on a groomed piste: mid-grey type on white snow has no contrast whatever you do
+   to it. Everything that has to be READ goes on enamel; only the speed number,
+   which is huge and yellow, is allowed to sit on the snow. */
 .cluster {
   position: absolute;
   left: 22px;
   bottom: 26px;
   display: flex;
   align-items: flex-end;
-  gap: 20px;
+  gap: 18px;
+  padding: 12px 18px 12px 15px;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-left: var(--band) solid var(--corduroy);
+  border-radius: var(--radius);
+  box-shadow: var(--plate-edge);
   --anchor: left bottom;
+  transform-origin: left bottom;
   transform: scale(var(--hud));
 }
 
@@ -360,12 +383,15 @@ html, body {
   padding-bottom: 6px;
 }
 
-.bar .t-label { font-size: 10px; letter-spacing: 0.16em; }
+.bar .t-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
 
 .bar__track {
   margin-top: 3px;
-  height: 4px;
-  background: rgba(242, 245, 248, 0.14);
+  height: 5px;
+  background: rgba(242, 245, 248, 0.16);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -884,8 +910,11 @@ kbd {
 .menu__plate {
   max-width: 480px;
   padding: 30px 34px 30px;
-  background: linear-gradient(180deg, rgba(10, 15, 21, 0.80), rgba(10, 15, 21, 0.62));
-  backdrop-filter: blur(12px);
+  background: linear-gradient(180deg, rgba(9, 14, 20, 0.90), rgba(9, 14, 20, 0.82));
+  /* A light blur only. The heavy one turned the mountain behind the plate into
+     grey mush with visible blotches — and the mountain is what the plate is
+     advertising. */
+  backdrop-filter: blur(3px);
   border: 1px solid var(--hairline);
   border-left: 6px solid var(--sun);
   border-radius: var(--radius);
@@ -938,19 +967,72 @@ kbd {
   letter-spacing: 0.14em;
 }
 
-.menu__facts {
-  list-style: none;
-  margin: 26px 0 0;
-  padding: 18px 0 0;
+/* The piste board. The one place in the menu where the three run colours are
+   doing their real job — telling you which run is which — rather than decorating
+   an edge. */
+.pistes {
+  margin-top: 24px;
+  padding-top: 17px;
   border-top: 1px solid var(--hairline);
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
 }
 
-.menu__facts li { display: grid; gap: 3px; }
-.menu__facts .t-label { font-size: 9.5px; letter-spacing: 0.16em; }
-.menu__fact { font-size: 17px; font-weight: 600; }
+.pistes__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pistes__state {
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6fbf7a;
+}
+
+.pistes__list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  background: var(--hairline);
+  border: 1px solid var(--hairline);
+}
+
+.pistes__run {
+  display: grid;
+  grid-template-columns: 14px 1fr auto auto;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 11px;
+  background: rgba(11, 17, 24, 0.72);
+  font-size: 13.5px;
+}
+
+.pistes__chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: block;
+  box-shadow: 0 0 0 1px rgba(242, 245, 248, 0.28);
+}
+
+.pistes__run--blue .pistes__chip { background: var(--blue); }
+.pistes__run--red .pistes__chip { background: var(--red); }
+.pistes__run--black .pistes__chip { background: #11151b; }
+
+.pistes__name { font-weight: 500; }
+.pistes__len, .pistes__grade { font-size: 12px; color: var(--corduroy); }
+.pistes__grade { min-width: 34px; text-align: right; }
+
+.pistes__foot {
+  margin: 11px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(199, 212, 224, 0.72);
+}
 
 .menu__hint {
   position: fixed;
@@ -960,10 +1042,13 @@ kbd {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.05em;
-  color: rgba(199, 212, 224, 0.66);
-  text-shadow: 0 1px 10px rgba(8, 12, 17, 0.8);
+  color: var(--corduroy);
+  padding: 6px 14px;
+  background: rgba(9, 14, 20, 0.72);
+  border-radius: var(--radius);
 }
 
 @media (max-width: 720px) {
-  .menu__facts { grid-template-columns: repeat(2, 1fr); }
+  .pistes__run { grid-template-columns: 12px 1fr auto; }
+  .pistes__grade { display: none; }
 }

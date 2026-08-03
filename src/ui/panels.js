@@ -44,8 +44,9 @@ export class Panels {
 
   get isOpen() { return this.current !== null; }
 
-  open(kind) {
+  open(kind, focus = null) {
     if (this.current === kind) return;
+    this.focus = focus;
     this.close();
     this.current = kind;
     this.game.input.exitPointerLock();
@@ -58,6 +59,10 @@ export class Panels {
     if (!build) { this.current = null; return; }
     this.node.appendChild(build());
     this.node.classList.add('panel-layer--on');
+    if (this.focus) {
+      const target = this.node.querySelector(`[data-section="${this.focus}"]`);
+      if (target) target.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }
     // The readouts are for the slope, not for the shop counter.
     this.game.hud?.node.classList.add('hud--hidden');
   }
@@ -388,6 +393,7 @@ export class Panels {
 
   section(title, content) {
     const sec = el('div', 'section');
+    sec.dataset.section = title.toLowerCase().split(' ')[0];
     sec.append(el('h3', 't-label', title), content);
     return sec;
   }
