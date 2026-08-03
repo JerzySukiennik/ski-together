@@ -16,7 +16,7 @@ Jurek reported in round two is fixed and committed, but **none of it has been
 played by a human yet** — that is the next thing that should happen.
 
 ```bash
-npm test          # 94 checks, three suites, no browser needed
+npm test          # 93 checks; 4 fail ON PURPOSE — see "the open defect" below
 python3 serve.py 8123
 ```
 
@@ -33,7 +33,7 @@ into a debugging session.
    down; the terrain now marches its own height field for a sun shadow and a sky
    occlusion term. `src/world/terrainMesh.js`.
 2. **Nothing left tracks** — see "the bug worth knowing about" below.
-3. **Both lifts too high** — cable profile rewritten, and it is under test now.
+3. **Both lifts too high** — **NOT ACTUALLY FIXED. See "the open defect".**
 4. **Some roofs inverted** — all three pitched buildings were inside out.
    `tools/build_buildings.py` replaces them.
 5. **Nothing had collision** — `src/world/collision.js`, plus a test that every
@@ -69,6 +69,37 @@ the snow in the track being a different material: packed, bluer, polished, and
 with the tiller marks gone.
 
 ---
+
+## The open defect: the lifts really are too high
+
+`npm test` is red on four checks and that is deliberate. Do not make them green
+without fixing the cause.
+
+Round two rewrote the cable profile and reported it fixed. It was not. The test
+rebuilt both lifts from parameters typed in a second time and **left out
+`canSupport`**, so it measured a chairlift with 39 pylons hugging the ground
+while the game shipped one with 14 and rope 38 m in the air. Both said "passing".
+
+`liftSpecs()` in `src/world/resort.js` is now the single description of both
+lifts, used by the game and by the test, so they cannot drift apart again. With
+the real thing measured:
+
+    chairlift: 1180 m, 20 pylons — cable 5.9-26.7 m up, 95% under 16.4 m
+               rider averages 6.4 m above the snow  (target: under 5.0)
+    drag lift:  380 m, 12 pylons — cable 4.3-12.6 m up, 95% under 10.0 m
+
+**The cause is routing, not the cable solver.** The chairlift line runs up the
+middle of the runs, so nearly every position the solver wants a pylon in is on a
+piste, `canSupport` refuses it, and the rope spans the gap instead. Two ways of
+forcing a pylon in anyway were tried and both reverted — they put hard obstacles
+in the middle of the red run, which `tests/collision.test.mjs` catches and which
+is worse than a high rope.
+
+The fix is to route the line clear of the pistes. That moves both terminals, so
+it touches the run starts, the buildings and the unload point: a design change,
+not a constant. A sweep of candidate summit approaches is in the session log; the
+best on gradient alone (`summit + (40, 45)`, steepest pitch 71% instead of 163%)
+runs straight up the red, so it needs the whole line moved, not just the top.
 
 ## Things that will bite you
 
@@ -141,7 +172,11 @@ reason its roofs were wrong.
 - **`assets/audio/music.mp3`** (Jurek's, 3.8 MB) plays in the cafe only. Menu
   music is not wired: audio cannot start before the first user gesture and the
   menu is before it.
-- Round two's fixes have not been played. **Do not assume they feel right.**
+- Round two's fixes have not been played. **Do not assume they feel right** —
+  one of them turned out not to be a fix at all.
+- **Do not trust a passing acceptance test that constructs its own copy of the
+  thing under test.** That is how the lift bug survived a whole round. If a test
+  needs the game's parameters, it should import them.
 
 ---
 
