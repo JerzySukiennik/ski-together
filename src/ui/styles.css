@@ -68,7 +68,17 @@ html, body {
   z-index: 10;
 }
 
-#ui > * { pointer-events: auto; }
+/* Deliberately NOT `#ui > * { pointer-events: auto }`. That rule wins on ID
+   specificity over `.hud { pointer-events: none }`, so the full-screen HUD ate
+   every click in the game: the canvas never saw one, pointer lock never engaged,
+   and with no pointer lock the input is idled — which looks exactly like "the
+   controls do not work". Only the things you actually click opt in. */
+.boot,
+.panel-layer--on,
+.clicktoplay,
+.menu {
+  pointer-events: auto;
+}
 
 .fallback {
   position: fixed;
@@ -111,6 +121,7 @@ html, body {
 .boot {
   position: fixed;
   inset: 0;
+  z-index: 50;
   display: grid;
   place-content: center;
   gap: 20px;
@@ -218,6 +229,7 @@ html, body {
   position: fixed;
   inset: 0;
   pointer-events: none;
+  z-index: 10;
   --chill: 0;
 }
 
@@ -232,7 +244,7 @@ html, body {
   transition: opacity 400ms var(--ease);
 }
 
-.hud--hidden { opacity: 0; pointer-events: none; }
+.hud--hidden { opacity: 0; pointer-events: none !important; }
 .hud { transition: opacity 180ms var(--ease); }
 
 .hud > * { pointer-events: none; }
@@ -534,9 +546,12 @@ kbd {
 
 /* ================================================================= panels */
 
+/* Above everything, including the main menu — the settings panel opened from the
+   menu was rendering underneath it. */
 .panel-layer {
   position: fixed;
   inset: 0;
+  z-index: 40;
   display: none;
   padding: 26px;
   overflow-y: auto;
@@ -824,4 +839,110 @@ kbd {
   .rail { display: none; }
     .cluster { gap: 12px; }
   .panel { max-width: none; }
+}
+
+/* ================================================================= main menu
+ *
+ * The 3D behind this is the real mountain with the real lifts turning, so the
+ * plate stays to one side and never covers what it is advertising.
+ */
+
+.menu {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  align-content: center;
+  padding: 0 clamp(24px, 6vw, 92px);
+  opacity: 1;
+  transition: opacity 380ms var(--ease);
+}
+
+.menu--leaving { opacity: 0; }
+
+.menu__plate {
+  max-width: 480px;
+  padding: 30px 34px 30px;
+  background: linear-gradient(180deg, rgba(10, 15, 21, 0.80), rgba(10, 15, 21, 0.62));
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--hairline);
+  border-left: 6px solid var(--sun);
+  border-radius: var(--radius);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.42);
+}
+
+.menu__title {
+  margin: 0;
+  display: grid;
+  font-family: var(--display);
+  font-weight: 700;
+  text-transform: uppercase;
+  line-height: 0.80;
+  letter-spacing: 0.005em;
+}
+
+/* Both words measured to the same optical width: the type becomes a block, and
+   the block is the logo. */
+.menu__title span:first-child {
+  font-size: clamp(58px, 8vw, 96px);
+  color: var(--snow);
+  -webkit-text-stroke: 0;
+}
+
+.menu__title span:last-child {
+  font-size: clamp(37px, 5.1vw, 61px);
+  color: transparent;
+  -webkit-text-stroke: 1.5px var(--snow);
+  letter-spacing: 0.055em;
+}
+
+.menu__tagline {
+  margin: 18px 0 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--corduroy);
+  max-width: 38ch;
+}
+
+.menu__actions {
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn--big {
+  font-size: 20px;
+  padding: 13px 34px;
+  letter-spacing: 0.14em;
+}
+
+.menu__facts {
+  list-style: none;
+  margin: 26px 0 0;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.menu__facts li { display: grid; gap: 3px; }
+.menu__facts .t-label { font-size: 9.5px; letter-spacing: 0.16em; }
+.menu__fact { font-size: 17px; font-weight: 600; }
+
+.menu__hint {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: rgba(199, 212, 224, 0.66);
+  text-shadow: 0 1px 10px rgba(8, 12, 17, 0.8);
+}
+
+@media (max-width: 720px) {
+  .menu__facts { grid-template-columns: repeat(2, 1fr); }
 }

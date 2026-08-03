@@ -18,6 +18,7 @@ import { HUD } from './ui/hud.js';
 import { Panels } from './ui/panels.js';
 import { GameAudio } from './audio/audio.js';
 import { Session } from './net/session.js';
+import { MainMenu } from './ui/menu.js';
 
 export class Game {
   constructor(canvas, uiRoot) {
@@ -43,6 +44,7 @@ export class Game {
     };
     this.prompt = null;
     this.railScore = 0;
+    this.mode = 'menu';
   }
 
   on(event, fn) { (this.listeners[event] ||= []).push(fn); return this; }
@@ -87,8 +89,11 @@ export class Game {
     // --- the player arrives on foot with nothing rented
     this.skier = new Skier(this.world, { name: this.state.name });
     this.skier.stats = null;
+    // Arrive on the packed ground between the buildings, facing the rental shop.
     const base = this.terrain.stations.base;
-    this.skier.placeOnGround(base.x - 22, base.z + 50, Math.PI * 1.02);
+    const shop = this.resort.zones.find((z) => z.kind === 'rental');
+    const sx = base.x - 26, sz = base.z + 58;
+    this.skier.placeOnGround(sx, sz, shop ? Math.atan2(shop.x - sx, shop.z - sz) : Math.PI);
 
     this.avatar = new Avatar(this.assets, { colours: this.state.colours, kind: 'ski' });
     this.avatar.gear.visible = false;
@@ -100,6 +105,7 @@ export class Game {
     this.engine.scene.add(this.groomer.group);
 
     this.camera = new FollowCamera(this.engine.camera, this.skier, this.world);
+    this.camera.trees = trees;
     this.ride = new LiftRide(this.skier);
 
     // Grooming pays by the square metre actually restored, so an hour in the
@@ -164,6 +170,10 @@ export class Game {
   // ------------------------------------------------------------------ loop
 
   update(dt, elapsed) {
+    if (this.mode === 'menu') {
+      this.updateMenu(dt, elapsed);
+      return;
+    }
     const raw = this.input.sample();
     const uiOpen = this.panels.isOpen;
     const idle = { steer: 0, throttle: 0, brake: 0, jump: false, jumpHeld: false, tuck: false, grab: false, lookX: 0, lookY: 0, zoom: 0 };
@@ -232,6 +242,29 @@ export class Game {
 
     this.input.endFrame();
     this.fire('frame', this);
+  }
+
+  /** The menu is the live world with a different camera in it. */
+  updateMenu(dt, elapsed) {
+    this.input.sample();
+    this.menu.update(dt);
+    this.resort.update(dt, elapsed, this.sky.nightAmount);
+    this.sky.update(dt, elapsed, this.engine.camera.position);
+    this.terrainMesh.setSun(
+      this.sky.sunDir, this.sky.sunColour, this.sky.skyColour,
+      this.sky.groundColour, this.sky.fogColour, this.sky.fogDensity,
+    );
+    this.engine.scene.fog.color.copy(this.sky.fogColour);
+    this.engine.scene.fog.density = this.sky.fogDensity;
+    this.terrainMesh.setLamps(
+      [...this.resort.lamps(), ...this.groomer.lamps()],
+      this.engine.camera.position,
+    );
+    this.terrainMesh.update(dt, elapsed, this.engine.camera.position);
+    this.forest.update(dt, elapsed, this.engine.camera);
+    this.engine.renderer.toneMappingExposure = this.sky.exposure;
+    this.avatar.root.visible = false;
+    this.input.endFrame();
   }
 
   handleEvents() {
@@ -422,10 +455,19 @@ window.addEventListener('unhandledrejection', (e) => fatal(e.reason));
 game.build((label) => { bootStep.textContent = label; }).catch(fatal).then((built) => {
   if (!built) return;
   boot.remove();
-  game.start();
   game.hud.mount();
-  canvas.addEventListener('click', () => {
-    if (!game.panels.isOpen) game.input.requestPointerLock();
+  game.menu = new MainMenu(uiRoot, game);
+  game.menu.mount();
+  game.start();
+
+  // Listen on the window rather than the canvas: the HUD is a full-screen layer
+  // and any future overlay would swallow a canvas-only listener the same way the
+  // first one did.
+  window.addEventListener('mousedown', (e) => {
+    if (game.mode !== 'play') return;
+    if (game.panels.isOpen) return;
+    if (e.target.closest('.panel-layer, .menu')) return;
+    game.input.requestPointerLock();
   });
   game.input.onPointerLockChange = (locked) => game.hud.setLocked(locked);
 });

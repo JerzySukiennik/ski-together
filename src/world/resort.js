@@ -9,6 +9,9 @@ import { MODE } from '../player/skier.js';
 // chair moving along a real cable and can look wherever you like.
 
 const CLEARANCE = 7.0; // metres of air under the cable
+const TERMINAL_ZONE = 34; // metres over which a carrier slows into a station
+const TERMINAL_SPEED = 1.6; // m/s at the loading point — walking pace, on purpose
+const BULLWHEEL_OFFSET = 4.9; // model-space distance from station origin to its wheel
 
 function sampleLine(sampler, from, to, step = 10) {
   const dx = to.x - from.x, dz = to.z - from.z;
@@ -78,16 +81,18 @@ export class Lift {
       this.group.add(ob);
     }
 
-    // --- stations, set back from the ends of the cable. Put them ON the ends and
-    // the first chair spawns inside the machine house with the camera in a wall.
+    // --- stations. The model's bullwheel sits BULLWHEEL_OFFSET behind its origin,
+    // so the terminal is placed such that its wheel lands exactly on the end of
+    // the haul rope — which is the whole reason the rope can be drawn wrapping
+    // around it instead of stopping in mid air.
     if (stationModel) {
-      const setback = 15;
-      for (const [end, sign, flip] of [[from, -1, 0], [to, 1, Math.PI]]) {
-        const sx = end.x + this.dir.x * setback * sign;
-        const sz = end.z + this.dir.y * setback * sign;
+      const head = Math.atan2(this.dir.x, this.dir.y);
+      for (const [end, sign, flip] of [[from, +1, 0], [to, -1, Math.PI]]) {
+        const sx = end.x + this.dir.x * BULLWHEEL_OFFSET * sign;
+        const sz = end.z + this.dir.y * BULLWHEEL_OFFSET * sign;
         const st = assets.instance(stationModel);
         st.position.set(sx, sampler.sampleHeight(sx, sz), sz);
-        st.rotation.y = Math.atan2(this.dir.x, this.dir.y) + flip;
+        st.rotation.y = head + flip;
         this.group.add(st);
       }
     }
@@ -101,10 +106,28 @@ export class Lift {
     this.group.add(new THREE.Mesh(cableGeo, cableMat));
     if (kind === 'chair') {
       // return cable, offset to the side like the real thing
-      const back = curvePts.map((v) => v.clone().addScaledVector(new THREE.Vector3(-this.dir.y, 0, this.dir.x), 4.7));
+      const perpV = new THREE.Vector3(-this.dir.y, 0, this.dir.x);
+      const back = curvePts.map((v) => v.clone().addScaledVector(perpV, 4.7));
       const backGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(back), Math.max(12, pts.length), 0.045, 5, false);
       this.group.add(new THREE.Mesh(backGeo, cableMat));
       this.returnOffset = 4.7;
+
+      // The half-turn round each bullwheel. Without it the rope simply stops at
+      // the terminal and the chairs teleport across to the return line.
+      const R = 4.7 / 2;
+      const fwd = new THREE.Vector3(this.dir.x, 0, this.dir.y);
+      for (const [end, outward] of [[curvePts[0], -1], [curvePts[curvePts.length - 1], +1]]) {
+        const centre = end.clone().addScaledVector(perpV, R);
+        const arc = [];
+        for (let i = 0; i <= 20; i++) {
+          const a = (i / 20) * Math.PI;
+          arc.push(centre.clone()
+            .addScaledVector(perpV, -Math.cos(a) * R)
+            .addScaledVector(fwd, Math.sin(a) * R * outward));
+        }
+        const arcGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(arc), 22, 0.045, 5, false);
+        this.group.add(new THREE.Mesh(arcGeo, cableMat));
+      }
     }
 
     // --- carriers
@@ -121,8 +144,11 @@ export class Lift {
     this.hangerHeight = kind === 'chair' ? 3.58 : 3.5;
     this.seatHeight = kind === 'chair' ? 1.04 : 0;
 
-    this.loadZone = { x: from.x, z: from.z, radius: 9 };
-    this.unloadZone = { x: to.x, z: to.z, radius: 12 };
+    // Stand at the gate, not on top of the bullwheel.
+    this.loadZone = {
+      x: from.x + this.dir.x * 9, z: from.z + this.dir.y * 9, radius: 12,
+    };
+    this.unloadZone = { x: to.x, z: to.z, radius: 14 };
   }
 
   /** Position, ground height and cable height at distance `s` along the line. */
@@ -140,11 +166,24 @@ export class Lift {
     };
   }
 
+  /**
+   * How fast a carrier is moving at loop position s. Full line speed in the
+   * middle, walking pace at the terminals — which is what makes getting on
+   * possible rather than a stunt.
+   */
+  speedAt(s) {
+    const loop = this.length * 2;
+    const d = Math.min(s, Math.abs(this.length - s), loop - s);
+    const t = THREE.MathUtils.clamp(d / TERMINAL_ZONE, 0, 1);
+    const ease = t * t * (3 - 2 * t);
+    return TERMINAL_SPEED + (this.speed - TERMINAL_SPEED) * ease;
+  }
+
   update(dt) {
     const loop = this.length * 2;
     const perp = new THREE.Vector2(-this.dir.y, this.dir.x);
     for (const c of this.carriers) {
-      c.s = (c.s + this.speed * dt) % loop;
+      c.s = (c.s + this.speedAt(c.s) * dt) % loop;
       const outbound = c.s <= this.length;
       const s = outbound ? c.s : loop - c.s;
       const p = this.at(s);
@@ -167,10 +206,10 @@ export class Lift {
   availableCarrier() {
     let best = null;
     for (const c of this.carriers) {
-      if (c.rider) continue;
-      if (!c.outbound) continue;
-      if (c.progress > 0.05) continue;
-      if (!best || c.progress > best.progress) best = c;
+      if (c.rider || !c.outbound) continue;
+      // Anything still inside the terminal, where it is crawling.
+      if (c.s > TERMINAL_ZONE * 0.85) continue;
+      if (!best || c.s > best.s) best = c;
     }
     return best;
   }
@@ -261,6 +300,8 @@ export class Resort {
     this.fire = { group: fire, flame, light };
     this.zones.push({ kind: 'fire', name: 'bonfire', x: fx, z: fz, y: fire.position.y, radius: 5.5 });
 
+    this.dressBase(base, face);
+
     // Floodlight masts along the lower runs, for the evening.
     this.floodlights = [];
     const run = this.terrain.runs.find((r) => r.key === 'red');
@@ -272,6 +313,65 @@ export class Resort {
       const px = -dz / len, pz = dx / len;
       const mx = x + px * (run.halfWidth + 3.5), mz = z + pz * (run.halfWidth + 3.5);
       this.addFloodlight(mx, mz, Math.atan2(-px, -pz));
+    }
+  }
+
+  /**
+   * The clutter that turns four buildings into a place: a piste map where people
+   * stop to read it, benches, a ticket hut, fences along the walkways, flags,
+   * crates outside the rental shop and snow cannons up the runs.
+   */
+  dressBase(base, face) {
+    const place = (model, x, z, rotY = 0, scale = 1) => {
+      const ob = this.assets.instance(model);
+      ob.position.set(x, this.sampler.sampleHeight(x, z), z);
+      ob.rotation.y = rotY;
+      if (scale !== 1) ob.scale.setScalar(scale);
+      this.group.add(ob);
+      return ob;
+    };
+
+    // the board everyone reads before their first run
+    place('prop_pistemap', base.x - 4, base.z + 40, face + 0.1);
+    this.zones.push({ kind: 'map', name: 'piste map', x: base.x - 4, z: base.z + 42, y: 0, radius: 4 });
+
+    place('prop_ticket', base.x + 16, base.z + 46, face - 0.3);
+    place('prop_bench', base.x - 18, base.z + 42, face);
+    place('prop_bench', base.x + 26, base.z + 40, face + 0.4);
+    place('prop_bench', base.x + 2, base.z + 62, face + Math.PI);
+    place('prop_bin', base.x - 9, base.z + 44, 0);
+    place('prop_bin', base.x + 21, base.z + 44, 0);
+    place('prop_crates', base.x - 58, base.z + 32, face + 0.9);
+    place('prop_crates', base.x - 40, base.z + 30, face - 0.4, 0.85);
+
+    // fences marking the walkway between the buildings and the lift
+    for (let k = 0; k < 4; k++) {
+      place('prop_fence', base.x - 30 + k * 8.1, base.z + 30, 0);
+    }
+    for (let k = 0; k < 3; k++) {
+      place('prop_fence', base.x + 34, base.z + 20 + k * 8.1, Math.PI / 2);
+    }
+
+    // flags at the arrival plaza
+    for (let k = 0; k < 4; k++) {
+      place('prop_flag', base.x - 34 + k * 22, base.z + 66, 0.3 + k * 0.4);
+    }
+
+    // snow cannons along the lower half of the red and the blue
+    for (const key of ['red', 'blue']) {
+      const run = this.terrain.runs.find((r) => r.key === key);
+      if (!run) continue;
+      for (let i = run.line.length - 18; i > run.line.length * 0.42; i -= 34) {
+        const [x, z] = run.line[i];
+        const [nx, nz] = run.line[i + 1];
+        const dx = nx - x, dz = nz - z;
+        const len = Math.hypot(dx, dz) || 1;
+        const px = -dz / len, pz = dx / len;
+        const side = (i % 68 === 0) ? 1 : -1;
+        const cx = x + px * (run.halfWidth + 2.6) * side;
+        const cz = z + pz * (run.halfWidth + 2.6) * side;
+        place('prop_cannon', cx, cz, Math.atan2(-px * side, -pz * side));
+      }
     }
   }
 
@@ -458,8 +558,14 @@ export class LiftRide {
     const c = this.carrier;
     const lift = this.lift;
     if (lift.kind === 'chair') {
-      // Sitting on the seat.
-      this.skier.pos.set(c.object.position.x, c.object.position.y + lift.seatHeight, c.object.position.z);
+      // On the seat pan, which is forward of the chair's own origin — sitting at
+      // the origin puts the rider inside the backrest.
+      const fwd = 0.34;
+      this.skier.pos.set(
+        c.object.position.x + lift.dir.x * fwd,
+        c.object.position.y + lift.seatHeight,
+        c.object.position.z + lift.dir.y * fwd,
+      );
     } else {
       // A drag lift does not carry you. You stay on your skis, on the snow, being
       // towed — which is why it is possible to fall off one.

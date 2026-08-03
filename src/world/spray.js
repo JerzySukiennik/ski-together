@@ -35,7 +35,7 @@ void main() {
   // soft edged puff, fading as it ages
   float a = (1.0 - r * 4.0) * vLife;
   a *= 0.55 + 0.45 * fract(vSeed * 13.37);
-  gl_FragColor = vec4(uColour, a * 0.75);
+  gl_FragColor = vec4(uColour, a * 0.42);
 }
 `;
 
@@ -96,11 +96,13 @@ export class SnowSpray {
     const t = skier.telemetry;
     const spray = t.spray || 0;
 
-    if (spray > 0.02 && t.speed > 1.5 && !t.airborne) {
+    // A clean carve throws a ribbon, not a blizzard. The old rate filled the
+    // screen with snow at exactly the moment you most needed to see the run.
+    if (spray > 0.14 && t.speed > 2.5 && !t.airborne) {
       // Rate follows how hard the edge is working, so a straight glide is silent
       // and a hockey stop throws a wall of snow.
-      this.accumulator += spray * t.speed * dt * 26;
-      const n = Math.min(28, Math.floor(this.accumulator));
+      this.accumulator += (spray - 0.12) * t.speed * dt * 7.5;
+      const n = Math.min(9, Math.floor(this.accumulator));
       this.accumulator -= n;
       const h = skier.heading;
       const fx = Math.sin(h), fz = Math.cos(h);
@@ -118,8 +120,8 @@ export class SnowSpray {
           -fx * t.speed * 0.16 + rx * side * out + (Math.random() - 0.5) * 1.2,
           up,
           -fz * t.speed * 0.16 + rz * side * out + (Math.random() - 0.5) * 1.2,
-          t.surface === 'powder' ? 130 : 78,
-          0.45 + Math.random() * (t.surface === 'powder' ? 0.9 : 0.35),
+          t.surface === 'powder' ? 78 : 46,
+          0.30 + Math.random() * (t.surface === 'powder' ? 0.55 : 0.22),
         );
       }
     }

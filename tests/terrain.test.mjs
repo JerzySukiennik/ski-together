@@ -151,9 +151,16 @@ check('fresh snapshot fits comfortably in one message', fresh.length < 200 * 102
 const red = terrain.runs.find((r) => r.key === 'red');
 const mid = red.line[Math.floor(red.line.length / 2)];
 const freshGrip = snow.surfaceAt(mid[0], mid[1]).grip;
+// Seeded, not Math.random(): with real randomness this check passed at 49% on one
+// run and 10% on the next, and a test that only usually passes is worse than none.
+let seedState = 424242;
+const rand = () => {
+  seedState = (seedState * 1664525 + 1013904223) >>> 0;
+  return seedState / 4294967296;
+};
 const LAPS = 40;
 for (let lap = 0; lap < LAPS; lap++) {
-  const drift = (Math.random() - 0.5) * 4;
+  const drift = (rand() - 0.5) * 4;
   for (let i = 0; i < red.line.length; i++) {
     const [x, z] = red.line[i];
     snow.pass(x + drift, z, 0.9, 16, 24);

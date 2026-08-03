@@ -249,11 +249,14 @@ export class Skier {
 
     // --- herringbone / skating on the flat and uphill
     const uphill = -slopeAcc.dot(fwd); // positive when the slope pushes you back
-    if (input.throttle && speed < 3.6 && this.stamina > 0.02) {
-      const push = gear.kind === 'ski' ? 2.35 : 1.75;
+    if (input.throttle && speed < 4.8 && this.stamina > 0.02) {
+      // Herringbone on skis, skating on a board. The skis win on the flat because
+      // two edges biting outwards beat one board being kicked along.
+      const push = gear.kind === 'ski' ? 3.1 : 2.9;
       acc.addScaledVector(fwd, push);
-      this.stamina = Math.max(0, this.stamina - dt * (0.045 + 0.10 * Math.max(0, uphill / G)));
+      this.stamina = Math.max(0, this.stamina - dt * (0.030 + 0.09 * Math.max(0, uphill / G)));
       this.telemetry.pushing = true;
+      this.pushPhase = (this.pushPhase || 0) + dt * (5.2 + speed * 1.1);
     } else {
       this.telemetry.pushing = false;
     }
@@ -412,7 +415,7 @@ export class Skier {
 
     // Sinking is the whole point: the groomed piste is a pavement, the powder is
     // a bog, and ice is a skating rink you did not ask for.
-    let speedCap = 2.2 * bootSpeed;
+    let speedCap = 3.4 * bootSpeed;
     let slip = 0;
     if (surf.kind === 'powder') speedCap *= 0.34 - Math.min(0.16, surf.sink * 0.2) + 0.16;
     else if (surf.kind === 'ice') { speedCap *= 0.86; slip = 0.9; }
@@ -420,8 +423,10 @@ export class Skier {
 
     const slopeAcc = _sa.set(0, -G, 0).addScaledVector(N, G * N.y);
     const steepness = Math.acos(THREE.MathUtils.clamp(N.y, -1, 1));
-    const uphillPenalty = 1 - THREE.MathUtils.clamp((steepness - 0.12) / 0.62, 0, 0.75);
-    speedCap *= uphillPenalty * (0.55 + 0.45 * this.stamina);
+    // Uphill is harder, but not so much harder that crossing the resort on foot
+    // becomes the longest part of the game.
+    const uphillPenalty = 1 - THREE.MathUtils.clamp((steepness - 0.16) / 0.75, 0, 0.5);
+    speedCap *= uphillPenalty * (0.78 + 0.22 * this.stamina);
 
     this.heading += -(input.steer || 0) * 2.6 * dt;
     const fwd = this.forwardVector(_f);
@@ -439,7 +444,7 @@ export class Skier {
     }
 
     if (wish.lengthSq() > 0.01) {
-      this.stamina = Math.max(0, this.stamina - dt * (0.028 + 0.14 * Math.max(0, steepness - 0.1)));
+      this.stamina = Math.max(0, this.stamina - dt * (0.016 + 0.10 * Math.max(0, steepness - 0.14)));
     } else {
       this.stamina = Math.min(1, this.stamina + dt * 0.09);
     }

@@ -9,6 +9,8 @@ import { MODE } from './skier.js';
 // which is why the ragdoll can take over mid-turn without a handover.
 
 const HIP_Y = 0.92;
+// From the ankle joint down to the base of the boot, plus the thickness of a ski.
+const SOLE_DROP = 0.145;
 const SHOULDER_Y = 0.36;
 const SHOULDER_X = 0.20;
 const HIP_X = 0.105;
@@ -22,9 +24,19 @@ export const DEFAULT_COLOURS = {
   scarf: '#ffb23f',
 };
 
+/** A colour a shade or two down from the given one, for contrast panels. */
+function darken(hex, amount = 0.55) {
+  const c = new THREE.Color(hex);
+  c.multiplyScalar(amount);
+  return `#${c.getHexString()}`;
+}
+
 function recolourMap(colours) {
   return {
     Jacket: colours.jacket,
+    // The jacket's contrast panels are the jacket, darker — so repainting at the
+    // booth keeps the outfit looking like one garment rather than two.
+    JacketDark: darken(colours.jacket, 0.42),
     Trousers: colours.trousers,
     Helmet: colours.helmet,
     GearPaint: colours.gear,
@@ -119,7 +131,7 @@ export class Avatar {
     if (this.kind === 'ski') {
       for (const side of [-1, 1]) {
         const ski = this.part('gear_ski');
-        ski.position.set(side * 0.17, 0.012, 0.06);
+        ski.position.set(side * 0.155, 0.012, 0.02);
         this.gear.add(ski);
         this.skis.push(ski);
       }
@@ -190,8 +202,13 @@ export class Avatar {
         set(fore, -0.85 - crouch * 0.35, 0, 0);
         pole.rotation.x = -0.42 - crouch * 0.55;
       }
-      this.gear.rotation.set(0, 0, -lean * 0.55);
-      this.gear.position.y = 0;
+      // Edging tilts the skis about their own centre line, which buries the lower
+      // edge in the snow. Lifting the pair by the height that tilt raises the
+      // contact edge keeps the edge ON the surface, which is the whole point of
+      // an edge.
+      const tilt = -lean * 0.62;
+      this.gear.rotation.set(0, 0, tilt);
+      this.gear.position.y = Math.abs(Math.sin(tilt)) * (this.kind === 'ski' ? 0.10 : 0.17);
     } else if (name === 'tuck') {
       this.hips.position.y = (HIP_Y - 0.30) * b;
       set(this.torso, 1.05, 0, 0);
@@ -223,6 +240,36 @@ export class Avatar {
         pole.rotation.x = -0.20;
       }
       this.gear.rotation.set(0, 0, 0);
+    } else if (name === 'push') {
+      // The V-step: tips splayed outwards, inside edges biting, weight rocking
+      // from one ski to the other. This is how you cross the flat on skis.
+      const swing = Math.sin(t);
+      const splay = this.kind === 'ski' ? 0.30 : 0.0;
+      this.hips.position.y = (HIP_Y - 0.10 - Math.abs(swing) * 0.03) * b;
+      set(this.torso, 0.40, -swing * 0.10, 0);
+      set(this.head, -0.26, swing * 0.12, 0);
+      this.legs.forEach(({ side, thigh, shin, boot }, i) => {
+        const s2 = i === 0 ? swing : -swing;
+        set(thigh, -0.34 - Math.max(0, s2) * 0.34, side * splay, side * 0.10);
+        set(shin, 0.52 + Math.max(0, s2) * 0.42, 0, 0);
+        set(boot, -0.16, 0, 0);
+      });
+      this.arms.forEach(({ side, upper, fore, pole }, i) => {
+        const s2 = i === 0 ? -swing : swing;
+        set(upper, -0.30 + s2 * 0.62, 0, side * 0.34);
+        set(fore, -0.62 - Math.max(0, s2) * 0.30, 0, 0);
+        // the pole plants behind you on the push
+        pole.rotation.x = -0.55 - Math.max(0, s2) * 0.55;
+      });
+      this.gear.rotation.set(0, 0, 0);
+      this.gear.position.y = 0;
+      // Splay the skis themselves into the V.
+      if (this.kind === 'ski') {
+        this.skis.forEach((ski, i) => {
+          ski.rotation.y = (i === 0 ? 1 : -1) * splay;
+          ski.rotation.z = (i === 0 ? 1 : -1) * -0.22;
+        });
+      }
     } else if (name === 'walk') {
       const speed = opts.speed || 0;
       const swing = Math.sin(t) * Math.min(1, speed / 1.6);
@@ -276,6 +323,11 @@ export class Avatar {
       }
       this.gear.rotation.set(0, 0, 0);
     }
+    if (name !== 'push' && this.kind === 'ski') {
+      for (const ski of this.skis) {
+        if (ski.rotation.y !== 0 || ski.rotation.z !== 0) ski.rotation.set(0, 0, 0);
+      }
+    }
     if (name !== 'walk') this.gear.visible = true;
   }
 
@@ -298,6 +350,7 @@ export class Avatar {
     }
 
     this.body.rotation.set(skier.pitch * 0.5, 0, -skier.roll);
+    this._plantFeet = true;
 
     if (skier.mode === MODE.LIFT) {
       // Chair: sitting. Drag lift: standing on your skis being towed.
@@ -310,10 +363,31 @@ export class Avatar {
       this.phase += dt * (4.4 + t.speed * 2.6);
       this.setPose('walk', this.phase, { speed: t.speed });
     } else if (skier.mode === MODE.RIDE) {
-      const crouch = skier._tuck ? 1 : THREE.MathUtils.clamp(t.speed / 26, 0, 0.5);
-      this.setPose(skier._tuck ? 'tuck' : 'ride', 0, { lean: skier.edge, crouch });
+      if (t.pushing) {
+        this.setPose('push', skier.pushPhase || 0);
+      } else {
+        const crouch = skier._tuck ? 1 : THREE.MathUtils.clamp(t.speed / 26, 0, 0.5);
+        this.setPose(skier._tuck ? 'tuck' : 'ride', 0, { lean: skier.edge, crouch });
+      }
     } else {
       this.setPose('stand', 0);
+    }
+
+    // Bending the knees shortens the leg, which lifts the boots off the snow and
+    // leaves the skis hanging in space below them. Rather than hand-tuning every
+    // pose, drop the whole body until the lower boot is standing on the ski.
+    if (this._plantFeet) {
+      this.body.position.y = 0;
+      this.body.updateMatrixWorld(true);
+      let lowest = Infinity;
+      for (const leg of this.legs) {
+        leg.boot.getWorldPosition(_wp);
+        if (_wp.y < lowest) lowest = _wp.y;
+      }
+      if (Number.isFinite(lowest)) {
+        this.body.position.y = (this.root.position.y + SOLE_DROP) - lowest;
+      }
+      this._plantFeet = false;
     }
 
     // A wave is one arm overriding whatever pose is underneath it, which is the
@@ -476,6 +550,7 @@ export class Ragdoll {
   }
 }
 
+const _wp = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
 function aimAt(object, dir, scale = 1) {

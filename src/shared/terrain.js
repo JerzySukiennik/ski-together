@@ -212,7 +212,11 @@ export function generateTerrain(seed = 20260802) {
   }
 
   // --- flatten the two stations before carving, so the runs meet real ground
-  const flattenDisc = (cx, cz, radius, feather, targetElev) => {
+  // `packed` marks the disc as trodden ground rather than deep powder. The base
+  // area of any resort is beaten solid by boots and machines all day, and without
+  // it the walk from the car park to the rental shop is a wade through knee-deep
+  // snow — which is exactly how it played before this line existed.
+  const flattenDisc = (cx, cz, radius, feather, targetElev, packed = false) => {
     const i0 = Math.max(0, toI(cx - radius - feather)), i1 = Math.min(HRES - 1, toI(cx + radius + feather));
     const j0 = Math.max(0, toJ(cz - radius - feather)), j1 = Math.min(HRES - 1, toJ(cz + radius + feather));
     for (let j = j0; j <= j1; j++) {
@@ -223,6 +227,7 @@ export function generateTerrain(seed = 20260802) {
         if (w <= 0) continue;
         const k = idx(i, j);
         height[k] = mix(height[k], targetElev, w);
+        if (packed && w > 0.35 && piste[k] === PISTE_OFF) piste[k] = PISTE_NURSERY;
       }
     }
   };
@@ -232,8 +237,8 @@ export function generateTerrain(seed = 20260802) {
 
   // Summit plateau takes the height the mountain already has there.
   summitArea.elev = height[idx(toI(0), toJ(Z_SUMMIT))];
-  flattenDisc(baseArea.x, baseArea.z, 92, 74, BASE_ELEV);
-  flattenDisc(summitArea.x, summitArea.z, 46, 46, summitArea.elev);
+  flattenDisc(baseArea.x, baseArea.z, 92, 74, BASE_ELEV, true);
+  flattenDisc(summitArea.x, summitArea.z, 46, 46, summitArea.elev, true);
 
   // --- carve each run
   const runs = [];

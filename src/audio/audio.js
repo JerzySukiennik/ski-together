@@ -79,6 +79,17 @@ export class GameAudio {
     this.engine.connect(this.engineFilter).connect(this.engineGain).connect(this.master);
     this.engine.start();
 
+    // --- an always-there mountain bed, so silence never reads as "the sound is
+    // broken". It is very quiet standing still and rises with the weather.
+    this.bed = this.makeNoiseSource();
+    this.bedFilter = this.ctx.createBiquadFilter();
+    this.bedFilter.type = 'lowpass';
+    this.bedFilter.frequency.value = 260;
+    this.bedGain = this.ctx.createGain();
+    this.bedGain.gain.value = 0.02;
+    this.bed.connect(this.bedFilter).connect(this.bedGain).connect(this.master);
+
+    this.stepTimer = 0;
     this.ready = true;
     this.loadFiles();
   }
@@ -169,6 +180,31 @@ export class GameAudio {
         o.start(t + i * 0.055);
         o.stop(t + i * 0.055 + 0.24);
       }
+    } else if (name === 'step') {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise;
+      src.playbackRate.value = 0.8 + Math.random() * 0.5;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 700 + Math.random() * 900;
+      f.Q.value = 0.9;
+      src.connect(f).connect(g);
+      g.gain.setValueAtTime(0.13 * volume, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+      src.start(t);
+      src.stop(t + 0.16);
+    } else if (name === 'land') {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noise;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(900, t);
+      f.frequency.exponentialRampToValueAtTime(180, t + 0.22);
+      src.connect(f).connect(g);
+      g.gain.setValueAtTime(0.34 * volume, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      src.start(t);
+      src.stop(t + 0.34);
     } else if (name === 'engine') {
       this.engineGain.gain.setTargetAtTime(0.12, t, 0.3);
     }
@@ -208,15 +244,21 @@ export class GameAudio {
     // in powder. This one parameter set is the whole difference between snows.
     const grounded = !t.airborne && g.equipped && t.speed > 0.4;
     const skid = t.skid || 0;
-    const level = grounded ? Math.min(0.5, (0.02 + skid * 0.34) * Math.min(1, t.speed / 8)) : 0;
+    // A ski gliding flat still hisses — loudly. The old floor of 0.02 meant that
+    // riding cleanly, which is most of the game, was silent.
+    const level = grounded
+      ? Math.min(0.62, (0.10 + skid * 0.42) * Math.min(1, 0.25 + t.speed / 11))
+      : 0;
     this.edgeGain.gain.setTargetAtTime(level, now, 0.06);
     const cold = t.surface === 'ice' ? 2400 : t.surface === 'powder' ? 420 : 1100;
     this.edgeFilter.frequency.setTargetAtTime(cold + t.speed * 22, now, 0.1);
     this.edgeFilter.Q.setTargetAtTime(t.surface === 'powder' ? 0.4 : 1.4, now, 0.2);
 
     // Wind rises with speed and is the main reason a tuck feels fast.
-    const wind = Math.min(0.35, Math.pow(t.speed / 26, 2) * 0.35);
+    const wind = Math.min(0.42, Math.pow(t.speed / 22, 1.7) * 0.42);
     this.windGain.gain.setTargetAtTime(wind, now, 0.15);
+    // The bed rises a little at altitude and a lot after dark.
+    this.bedGain.gain.setTargetAtTime(0.018 + g.sky.nightAmount * 0.022, now, 1.2);
     this.windFilter.frequency.setTargetAtTime(320 + t.speed * 34, now, 0.2);
 
     // Engine, only while somebody is actually driving.
@@ -225,6 +267,25 @@ export class GameAudio {
     if (driving) {
       this.engine.frequency.setTargetAtTime(38 + Math.abs(g.groomer.speed) * 7.5, now, 0.15);
       this.engineFilter.frequency.setTargetAtTime(240 + Math.abs(g.groomer.speed) * 60, now, 0.2);
+    }
+
+    // Footsteps: one crunch per stride, pitched by what is underfoot.
+    if (!g.equipped || g.state.lostGear) {
+      if (t.speed > 0.4) {
+        this.stepTimer -= dt * (1.1 + t.speed * 0.85);
+        if (this.stepTimer <= 0) {
+          this.stepTimer = 1;
+          this.play('step', { volume: t.surface === 'powder' ? 0.7 : 1 });
+        }
+      }
+    }
+
+    // Landing, once, on the frame the skier touches down.
+    if (t.thud > 0.02 && !this._thudPlayed) {
+      this.play('land', { volume: Math.min(1, t.thud * 1.4) });
+      this._thudPlayed = true;
+    } else if (t.thud <= 0.02) {
+      this._thudPlayed = false;
     }
 
     // Recorded loops belong to places, not to the player.

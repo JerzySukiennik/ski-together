@@ -185,7 +185,10 @@ const walkPiste = walkSpeed(slopeWorld(0.06));
 const walkPowder = walkSpeed(slopeWorld(0.06, { onPiste: false }));
 const walkIce = walkSpeed(slopeWorld(0.06, { cond: 6 }));
 console.log(`\nwalking in boots: piste ${walkPiste.toFixed(2)} m/s, powder ${walkPowder.toFixed(2)} m/s, ice ${walkIce.toFixed(2)} m/s`);
-check('walking on a groomed piste is a normal walk', walkPiste > 0.8 && walkPiste < 2.6, `${walkPiste.toFixed(2)} m/s`);
+// Deliberately faster than a literal human walk: crossing the resort at 1.4 m/s
+// turned the walk to the shop into the longest part of the game.
+check('walking on a groomed piste is brisk but not a sprint',
+  walkPiste > 1.6 && walkPiste < 3.4, `${walkPiste.toFixed(2)} m/s`);
 check('walking in powder is a slog', walkPowder < walkPiste * 0.62, `${walkPowder.toFixed(2)} m/s`);
 
 // ---------------------------------------------------------------- the real mountain

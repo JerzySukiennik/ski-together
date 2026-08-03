@@ -221,12 +221,16 @@ float farField(vec2 world, float edgeHeight) {
   float d = max(abs(world.x), abs(world.y));
   float t = smoothstep(620.0, 1050.0, d);
   if (t <= 0.0) return 0.0;
+  // Three octaves starting coarse: the finest wavelength here is about 210 m,
+  // which the 32 m outer ring can still represent. Any finer and neighbouring
+  // clipmap levels reconstruct different surfaces and the horizon flickers and
+  // cracks as the camera moves.
   float r = 0.0, amp = 1.0;
-  vec2 q = world / 620.0;
-  for (int i = 0; i < 4; i++) {
+  vec2 q = world / 900.0;
+  for (int i = 0; i < 3; i++) {
     float n = 1.0 - abs(fnoise(q) * 2.0 - 1.0);
     r += n * n * amp;
-    amp *= 0.46;
+    amp *= 0.44;
     q *= 2.07;
   }
   return t * (r * 300.0 - 90.0) * smoothstep(0.0, 1.0, t);
@@ -261,7 +265,10 @@ void main() {
   vec2 snowUv = (world - uSnowOrigin) / uSnowSize;
   float inside = step(0.0, snowUv.x) * step(snowUv.x, 1.0) * step(0.0, snowUv.y) * step(snowUv.y, 1.0);
   float carve = texture2D(uCarve, clamp(snowUv, 0.0, 1.0)).r * inside;
-  h -= carve * uCarveMax;
+  // A rut is 0.5 m wide. Displacing a 32 m vertex by it punches a crater you can
+  // see from the far side of the valley — and fall into. Fade the displacement
+  // out as the cells get bigger than the feature they represent.
+  h -= carve * uCarveMax * (1.0 - smoothstep(1.5, 6.0, aCell));
 
   vSnowUv = snowUv;
   vSnowMask = inside;

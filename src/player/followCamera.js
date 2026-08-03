@@ -28,6 +28,9 @@ export class FollowCamera {
     this.initialised = false;
     this.mode = 'follow'; // or 'free'
     this.fovBase = camera.fov;
+    this.trees = null;        // set by the game once the forest exists
+    this.nearTrees = [];
+    this.treeCheck = 0;
   }
 
   reset() {
@@ -46,12 +49,12 @@ export class FollowCamera {
 
     if (input) {
       this.yaw -= input.lookX;
-      this.pitch = THREE.MathUtils.clamp(this.pitch + input.lookY, -0.55, 0.95);
+      // Pushing the mouse away tips the view up, the way it does everywhere else.
+      this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookY, -0.55, 0.95);
       if (input.zoom) this.targetDistance = THREE.MathUtils.clamp(this.targetDistance + input.zoom * 0.8, 2.4, 14);
     }
-    // The camera drifts back behind the skier when you stop steering it, but only
-    // slowly enough that you can keep watching a friend on the next line.
-    this.yaw = THREE.MathUtils.damp(this.yaw, 0, 0.55, dt);
+    // The camera stays exactly where you put it. It used to drift back behind the
+    // skier on its own, which reads as the camera fighting you.
 
     const speed = s.telemetry.speed;
     const fast = THREE.MathUtils.clamp(speed / 24, 0, 1);
@@ -75,6 +78,11 @@ export class FollowCamera {
     // Never let the camera go under the snow.
     const ground = this.world.sampler.sampleHeight(_desired.x, _desired.z) + 0.9;
     if (_desired.y < ground) _desired.y = ground;
+
+    // Nor inside a spruce. Trees are instanced, so there is nothing to raycast
+    // against — but the scatter list is right here, and pulling the camera in
+    // until it is clear costs a handful of distance checks.
+    this.avoidTrees(_target, _desired);
 
     if (!this.initialised) {
       this.smoothed.copy(_desired);
@@ -125,9 +133,8 @@ FollowCamera.prototype.updateLift = function updateLift(dt, input) {
   const s = this.skier;
   if (input) {
     this.yaw -= input.lookX;
-    this.pitch = THREE.MathUtils.clamp(this.pitch + input.lookY, -0.5, 0.8);
+    this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookY, -0.5, 0.8);
   }
-  this.yaw = THREE.MathUtils.damp(this.yaw, 0, 0.35, dt);
   const angle = s.heading + Math.PI + this.yaw;
   const dist = 5.6;
   // Sit off to one side: straight behind puts the haul rope down the middle of
@@ -152,5 +159,41 @@ FollowCamera.prototype.updateLift = function updateLift(dt, input) {
   if (Math.abs(this.camera.fov - this.fovBase) > 0.02) {
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, this.fovBase, 3, dt);
     this.camera.updateProjectionMatrix();
+  }
+};
+
+/**
+ * Keep the camera out of the trees. Refresh the candidate list occasionally —
+ * a spruce does not move — then, every frame, walk the camera back towards the
+ * skier until nothing is inside it.
+ */
+FollowCamera.prototype.avoidTrees = function avoidTrees(target, desired) {
+  if (!this.trees || !this.trees.length) return;
+  this.treeCheck -= 1;
+  if (this.treeCheck <= 0) {
+    this.treeCheck = 30;
+    this.nearTrees.length = 0;
+    for (const t of this.trees) {
+      const dx = t.x - target.x, dz = t.z - target.z;
+      if (dx * dx + dz * dz < 40 * 40) this.nearTrees.push(t);
+    }
+  }
+  if (!this.nearTrees.length) return;
+
+  for (let pass = 0; pass < 6; pass++) {
+    let worst = 0;
+    for (const t of this.nearTrees) {
+      // Only the trunk and the lower skirt matter; the camera sits low.
+      const radius = 1.5 * t.scale;
+      const dx = desired.x - t.x, dz = desired.z - t.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > radius * radius) continue;
+      const d = Math.sqrt(d2) || 0.001;
+      worst = Math.max(worst, radius - d);
+    }
+    if (worst <= 0.001) break;
+    // Pull straight back towards the skier — never sideways, which would swing
+    // the shot around and read as the camera panicking.
+    desired.lerp(target, Math.min(0.4, worst * 0.35 + 0.08));
   }
 };
