@@ -18,6 +18,13 @@ export class FollowCamera {
     this.skier = skier;
     this.world = world;
     this.yaw = 0; // relative to the skier's heading
+    // On foot the camera has to be anchored to the WORLD, not to the body: the
+    // body turns to face wherever you are walking, so a camera that rode on the
+    // heading would rotate the controls that are rotating it, and the pair would
+    // spiral. Riding keeps the relative yaw, because there the body IS the frame.
+    this.walkYaw = 0;
+    this.wasWalking = false;
+    this.worldYaw = 0;
     this.pitch = 0.10;
     this.distance = 6.2;
     this.targetDistance = 6.2;
@@ -47,8 +54,16 @@ export class FollowCamera {
       return;
     }
 
+    // Hand the two frames over to each other on the way in and out, so putting the
+    // skis on never snaps the view somewhere you did not point it.
+    const walking = s.mode === MODE.WALK || s.mode === MODE.CRASH;
+    if (walking && !this.wasWalking) this.walkYaw = s.heading + this.yaw;
+    else if (!walking && this.wasWalking) this.yaw = this.walkYaw - s.heading;
+    this.wasWalking = walking;
+
     if (input) {
       this.yaw -= input.lookX;
+      this.walkYaw -= input.lookX;
       // Pushing the mouse away tips the view up, the way it does everywhere else.
       this.pitch = THREE.MathUtils.clamp(this.pitch - input.lookY, -0.55, 0.95);
       if (input.zoom) this.targetDistance = THREE.MathUtils.clamp(this.targetDistance + input.zoom * 0.8, 2.4, 14);
@@ -61,7 +76,8 @@ export class FollowCamera {
     const dist = this.targetDistance + fast * 2.6;
     this.distance = THREE.MathUtils.damp(this.distance, dist, 4, dt);
 
-    const angle = s.heading + this.yaw;
+    const angle = walking ? this.walkYaw : s.heading + this.yaw;
+    this.worldYaw = angle;
     const pitch = this.pitch - fast * 0.06;
 
     _target.copy(s.pos);

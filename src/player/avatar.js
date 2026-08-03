@@ -61,6 +61,30 @@ export class Avatar {
     this.phase = 0;
     this.ragdoll = null;
     this.wave = 0;
+    // Absorption: legs soaking up a landing or a bump, decaying back to standing.
+    this.squash = 0;
+    // Pole plant: which side, and how far through it we are.
+    this.plant = { side: 0, t: 0 };
+    this.lastEdge = 0;
+  }
+
+  /**
+   * Everything a pose writes to.
+   *
+   * The poses themselves set rotations outright, which is easy to read and makes
+   * every transition a snap — the skier changed shape between one frame and the
+   * next. Rather than rewrite nine poses to emit blendable data, the update loop
+   * remembers where every joint WAS, lets the pose write where it should be, and
+   * then moves each joint part of the way there. One list, and every pose in the
+   * game gained a transition.
+   */
+  joints() {
+    if (this._joints) return this._joints;
+    const out = [this.torso, this.head];
+    for (const a of this.arms) out.push(a.upper, a.fore, a.pole);
+    for (const l of this.legs) out.push(l.thigh, l.shin, l.boot);
+    this._joints = out;
+    return out;
   }
 
   part(name) {
@@ -121,6 +145,7 @@ export class Avatar {
 
     this.gear = new THREE.Group();
     this.body.add(this.gear);
+    this._joints = null;
     this.buildGear();
     this.setPose('stand', 0);
   }
@@ -188,8 +213,12 @@ export class Avatar {
     if (name === 'ride') {
       const deep = 0.42 + crouch * 0.55;
       this.hips.position.y = (HIP_Y - deep * 0.22) * b;
-      set(this.torso, 0.30 + crouch * 0.42, -lean * 0.20, lean * 0.10);
-      set(this.head, -0.22 - crouch * 0.22, lean * 0.30, 0);
+      // Counter-rotation and angulation: the legs turn, the upper body stays
+      // pointed down the hill, and the hips push into the turn while the shoulders
+      // stay level. That separation is what a skier looks like from behind, and
+      // without it the whole body swings round like a shop dummy on a turntable.
+      set(this.torso, 0.30 + crouch * 0.42, -lean * 0.46, lean * 0.22);
+      set(this.head, -0.22 - crouch * 0.22, lean * 0.52, -lean * 0.10);
       for (const { side, thigh, shin, boot } of this.legs) {
         // the outside leg carries the turn, so it straightens
         const load = 1 + side * lean * 0.55;
@@ -272,21 +301,25 @@ export class Avatar {
       }
     } else if (name === 'walk') {
       const speed = opts.speed || 0;
-      const swing = Math.sin(t) * Math.min(1, speed / 1.6);
-      const lift = Math.max(0, Math.sin(t)) * Math.min(1, speed / 1.6);
-      this.hips.position.y = (HIP_Y - 0.03 - lift * 0.02) * b;
-      set(this.torso, 0.12 + speed * 0.05, 0, 0);
-      set(this.head, -0.08, swing * 0.08, 0);
+      const gait = Math.min(1, speed / 1.8);
+      const swing = Math.sin(t) * gait;
+      // Two bounces per stride, because you rise over each planted foot.
+      const bob = Math.abs(Math.cos(t)) * gait;
+      this.hips.position.y = (HIP_Y - 0.05 + bob * 0.045) * b;
+      // Boots on snow: you lean forward and roll your shoulders against the stride.
+      set(this.torso, 0.14 + gait * 0.16, -swing * 0.13, 0);
+      set(this.head, -0.10 - gait * 0.06, swing * 0.10, 0);
       this.legs.forEach(({ side, thigh, shin, boot }, i) => {
         const s = i === 0 ? swing : -swing;
-        set(thigh, -s * 0.55, 0, side * 0.05);
-        set(shin, Math.max(0, s) * 0.85 + 0.12, 0, 0);
-        set(boot, -0.1, 0, 0);
+        set(thigh, -s * 0.62, 0, side * 0.06);
+        // The trailing leg straightens and the leading one folds under.
+        set(shin, Math.max(0, s) * 0.95 + 0.14, 0, 0);
+        set(boot, -0.08 - Math.max(0, -s) * 0.28, 0, 0);
       });
       this.arms.forEach(({ side, upper, fore, pole }, i) => {
         const s = i === 0 ? -swing : swing;
-        set(upper, s * 0.5, 0, side * 0.22);
-        set(fore, -0.35, 0, 0);
+        set(upper, s * 0.62, 0, side * (0.20 + gait * 0.06));
+        set(fore, -0.32 - Math.max(0, s) * 0.34, 0, 0);
         pole.rotation.x = -0.30;
       });
       this.gear.rotation.set(0, 0, 0);
@@ -352,6 +385,32 @@ export class Avatar {
     this.body.rotation.set(skier.pitch * 0.5, 0, -skier.roll);
     this._plantFeet = true;
 
+    // --- remember where every joint is, so the pose about to be written can be
+    //     blended towards rather than snapped to.
+    const joints = this.joints();
+    const before = joints.map((j) => [j.rotation.x, j.rotation.y, j.rotation.z]);
+    const hipsBefore = this.hips.position.y;
+    const gearBefore = [this.gear.rotation.z, this.gear.position.y];
+
+    // --- absorption. A landing folds the legs and they come back up; so does
+    //     clipping something. Without it the skier lands like a dropped chair.
+    this.squash = Math.max(this.squash * Math.pow(0.02, dt * 2.6), 0);
+    if (t.thud > 0.02) this.squash = Math.max(this.squash, Math.min(1, t.thud * 1.3));
+
+    // --- pole plant. A skier reaching into a new turn touches the inside pole
+    //     down as the edges change over. Watch for the edge crossing zero.
+    if (skier.mode === MODE.RIDE && t.speed > 6) {
+      const e = skier.edge;
+      if (e * this.lastEdge < 0 && Math.abs(e - this.lastEdge) > 0.05) {
+        this.plant.side = e > 0 ? 1 : -1;
+        this.plant.t = 1;
+      }
+      this.lastEdge = e;
+    } else {
+      this.lastEdge = 0;
+    }
+    this.plant.t = Math.max(0, this.plant.t - dt * 3.2);
+
     if (skier.mode === MODE.LIFT) {
       // Chair: sitting. Drag lift: standing on your skis being towed.
       this.setPose(skier.liftKind === 'drag' ? 'stand' : 'sit', 0);
@@ -371,6 +430,48 @@ export class Avatar {
       }
     } else {
       this.setPose('stand', 0);
+    }
+
+    // --- blend towards whatever the pose just asked for.
+    //
+    // Air and crashes want to be quick; standing around wants to be lazy. A single
+    // rate makes one of the two look wrong, so it comes from the pose.
+    const rate = skier.mode === MODE.AIR ? 15
+      : skier.mode === MODE.RIDE ? 12
+        : 9;
+    const k = 1 - Math.exp(-rate * dt);
+    joints.forEach((j, i) => {
+      const p = before[i];
+      j.rotation.set(
+        p[0] + (j.rotation.x - p[0]) * k,
+        p[1] + (j.rotation.y - p[1]) * k,
+        p[2] + (j.rotation.z - p[2]) * k,
+      );
+    });
+    this.hips.position.y = hipsBefore + (this.hips.position.y - hipsBefore) * k;
+    this.gear.rotation.z = gearBefore[0] + (this.gear.rotation.z - gearBefore[0]) * k;
+    this.gear.position.y = gearBefore[1] + (this.gear.position.y - gearBefore[1]) * k;
+
+    // --- absorption, applied on top of the blended pose so it reads on every one
+    if (this.squash > 0.001) {
+      const s = this.squash;
+      this.hips.position.y -= s * 0.24 * this.build;
+      for (const leg of this.legs) {
+        leg.thigh.rotation.x -= s * 0.55;
+        leg.shin.rotation.x += s * 0.95;
+        leg.boot.rotation.x -= s * 0.30;
+      }
+      this.torso.rotation.x += s * 0.30;
+    }
+
+    // --- the pole reaching down into the new turn
+    if (this.plant.t > 0.001 && this.kind === 'ski') {
+      const arm = this.arms[this.plant.side > 0 ? 1 : 0];
+      const reach = Math.sin(this.plant.t * Math.PI);
+      arm.upper.rotation.x += reach * 0.55;
+      arm.upper.rotation.z += this.plant.side * reach * 0.30;
+      arm.fore.rotation.x += reach * 0.42;
+      arm.pole.rotation.x -= reach * 0.85;
     }
 
     // Bending the knees shortens the leg, which lifts the boots off the snow and

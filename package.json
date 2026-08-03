@@ -7,7 +7,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "node tests/terrain.test.mjs && node tests/physics.test.mjs",
+    "test": "node tests/terrain.test.mjs && node tests/physics.test.mjs && node tests/collision.test.mjs",
     "serve": "python3 serve.py"
   },
   "keywords": [],

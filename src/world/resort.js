@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BASE_ELEV, NURSERY } from '../shared/terrain.js';
+import { BASE_ELEV, NURSERY, PISTE_OFF } from '../shared/terrain.js';
 import { MODE } from '../player/skier.js';
 
 // The resort: the buildings at the bottom and the two lifts that take you up.
@@ -8,12 +8,15 @@ import { MODE } from '../player/skier.js';
 // and carriers spaced along it. Riding one is not a cutscene — you sit on a real
 // chair moving along a real cable and can look wherever you like.
 
-const CLEARANCE = 7.0; // metres of air under the cable
+// Metres of air under the cable at a pylon. A chair really does hang about this
+// far up; a T-bar cable is much lower, because it only has to clear a standing
+// skier and the bar itself has to reach their backside.
+const CLEARANCE = { chair: 6.0, drag: 4.4 };
 const TERMINAL_ZONE = 34; // metres over which a carrier slows into a station
 const TERMINAL_SPEED = 1.6; // m/s at the loading point — walking pace, on purpose
 const BULLWHEEL_OFFSET = 4.9; // model-space distance from station origin to its wheel
 
-function sampleLine(sampler, from, to, step = 10) {
+export function sampleLine(sampler, from, to, step = 10) {
   const dx = to.x - from.x, dz = to.z - from.z;
   const total = Math.hypot(dx, dz);
   const n = Math.max(2, Math.round(total / step));
@@ -27,23 +30,122 @@ function sampleLine(sampler, from, to, step = 10) {
 }
 
 /**
- * Cable height along the line. The cable has to clear the ground everywhere, so
- * the profile is the upper envelope of the terrain plus clearance, smoothed until
- * it looks like something a cable would actually do.
+ * Cable height along the line.
+ *
+ * A haul rope is not a smoothed copy of the ground: it is a straight line between
+ * pylons with a little sag in it, and each pylon is only as tall as it has to be.
+ * The previous version smoothed an envelope with an operator that could only ever
+ * raise it, so on a mountain of this shape the errors accumulated the whole way up
+ * and the chair ended up an average of twelve metres above the snow and thirty-five
+ * at the worst point. Solving for the supports instead keeps it near the clearance
+ * everywhere, which is measurable rather than tuned.
  */
-function cableProfile(pts) {
-  const need = pts.map((p) => p.ground + CLEARANCE);
-  // running maximum both ways gives a taut upper hull
-  for (let i = 1; i < need.length; i++) need[i] = Math.max(need[i], need[i - 1] - 3.4);
-  for (let i = need.length - 2; i >= 0; i--) need[i] = Math.max(need[i], need[i + 1] - 3.4);
-  const out = need.slice();
-  for (let pass = 0; pass < 6; pass++) {
-    for (let i = 1; i < out.length - 1; i++) {
-      const avg = (out[i - 1] + out[i] * 2 + out[i + 1]) / 4;
-      out[i] = Math.max(need[i], avg);
+export function cableProfile(pts, length, spans, clearance, {
+  maxClearance = clearance + 4.5,
+  // A pylon may not stand on a piste. Where a line crosses a run it spans it and
+  // flies higher over it, which is what every real lift does and what every real
+  // skier is grateful for.
+  canSupport = () => true,
+} = {}) {
+  const lerpAt = (s, key) => {
+    const f = THREE.MathUtils.clamp(s / length, 0, 1) * (pts.length - 1);
+    const i = Math.min(pts.length - 2, Math.floor(f));
+    return pts[i][key] + (pts[i + 1][key] - pts[i][key]) * (f - i);
+  };
+  const groundAt = (s) => lerpAt(s, 'ground');
+  const sagOf = (span) => Math.min(1.1, span * 0.010);
+  const heightIn = (a, b, t) => a.y + (b.y - a.y) * t - sagOf(b.s - a.s) * 4 * t * (1 - t);
+
+  const sup = [];
+  for (let k = 0; k <= spans; k++) {
+    let s = (k / spans) * length;
+    // The evenly spaced layout is only a starting guess, and a guess that lands a
+    // pylon in the middle of a run is worse than no pylon at all. Slide it along
+    // the line until it is off the piste; if there is nowhere, drop it and let the
+    // neighbouring span carry the extra distance.
+    if (k > 0 && k < spans && !canSupport(lerpAt(s, 'x'), lerpAt(s, 'z'))) {
+      let found = -1;
+      for (let d = 4; d <= 34 && found < 0; d += 4) {
+        for (const trial of [s - d, s + d]) {
+          if (trial <= 0 || trial >= length) continue;
+          if (canSupport(lerpAt(trial, 'x'), lerpAt(trial, 'z'))) { found = trial; break; }
+        }
+      }
+      if (found < 0) continue;
+      s = found;
     }
+    sup.push({ s, y: groundAt(s) + clearance });
   }
-  return out;
+
+  const spanIndex = (s) => {
+    let k = 0;
+    while (k < sup.length - 2 && sup[k + 1].s <= s) k++;
+    return k;
+  };
+  const at = (s) => {
+    const k = spanIndex(s);
+    const a = sup[k], b = sup[k + 1];
+    return heightIn(a, b, THREE.MathUtils.clamp((s - a.s) / (b.s - a.s), 0, 1));
+  };
+
+  // Every pylon simply holds the rope at the clearance height above its own
+  // footing — no solving, no shared unknowns, nothing that can drift. Where the
+  // ground between two pylons then pokes through the chord, or falls away far
+  // below it, the answer is the same one a lift engineer reaches for: put a pylon
+  // there. So the terrain decides how many pylons it needs, and a smooth slope
+  // gets the sparse, evenly spaced line it should have.
+  const addSupportAt = (s) => {
+    // The last stretch into the top station is where the ground climbs hardest, so
+    // this has to be allowed to put a pylon close to the terminal. Forbidding that
+    // is what left the final eighty metres of the ride hanging twenty-seven metres
+    // up: with nowhere to stand, the only way to clear the rise was to lift it.
+    const clamped = THREE.MathUtils.clamp(s, length * 0.02, length * 0.985);
+    if (sup.some((p) => Math.abs(p.s - clamped) < 9)) return false;
+    if (!canSupport(lerpAt(clamped, 'x'), lerpAt(clamped, 'z'))) return false;
+    sup.push({ s: clamped, y: groundAt(clamped) + clearance });
+    sup.sort((a, b) => a.s - b.s);
+    return true;
+  };
+
+  // When a bump is so close to an existing pylon that another one cannot go in,
+  // lift that one span over it. Only the offending span moves, so this can never
+  // walk up the line the way a global relaxation does.
+  const raiseSpanOver = (s) => {
+    const k = spanIndex(s);
+    const a = sup[k], b = sup[k + 1];
+    const t = THREE.MathUtils.clamp((s - a.s) / (b.s - a.s), 0, 1);
+    const need = (groundAt(s) + clearance) - at(s);
+    if (need <= 0) return false;
+    a.y += need * (1 - t);
+    b.y += need * t;
+    return true;
+  };
+
+  // Somewhere a pylon was wanted and could not go — over a piste, or too close to
+  // one that is already there. Remember those so the search moves on to the next
+  // trouble spot instead of giving up on the whole line at the first refusal.
+  const refused = [];
+  const isRefused = (s) => refused.some((r) => Math.abs(r - s) < 9);
+
+  for (let guard = 0; guard < 60; guard++) {
+    let lowWorst = 0, lowS = -1;   // rope dipping below the clearance
+    let highWorst = 0, highS = -1; // rope standing miles above the snow
+    for (const p of pts) {
+      const gap = at(p.s) - p.ground;
+      if (clearance - gap > lowWorst) { lowWorst = clearance - gap; lowS = p.s; }
+      if (gap - maxClearance > highWorst && !isRefused(p.s)) {
+        highWorst = gap - maxClearance; highS = p.s;
+      }
+    }
+    // A rope on the ground is a broken lift; a rope too high is only ugly.
+    if (lowWorst > 0.15) {
+      if (!addSupportAt(lowS) && !raiseSpanOver(lowS)) break;
+    } else if (highWorst > 0) {
+      if (!addSupportAt(highS)) refused.push(highS);
+    } else break;
+  }
+
+  return { heights: pts.map((p) => at(p.s)), supports: sup.map((p) => p.s) };
 }
 
 export class Lift {
@@ -62,16 +164,24 @@ export class Lift {
     const { pts, length } = sampleLine(sampler, from, to, 8);
     this.length = length;
     this.pts = pts;
-    this.cableY = cableProfile(pts);
+    // One span per pylon gap, so the pylons stand exactly under the points the
+    // profile is solved for and each one is only as tall as its own support.
+    this.spans = Math.max(2, Math.round(length / pylonSpacing));
+    const profile = cableProfile(pts, length, this.spans, CLEARANCE[kind], {
+      canSupport: opts.canSupport,
+    });
+    this.cableY = profile.heights;
+    this.supports = profile.supports;
     this.from = from;
     this.to = to;
     this.dir = new THREE.Vector2(to.x - from.x, to.z - from.z).normalize();
     this.rideSeconds = length / speed;
 
     // --- pylons
-    const pylonCount = Math.max(2, Math.round(length / pylonSpacing));
-    for (let i = 1; i < pylonCount; i++) {
-      const s = (i / pylonCount) * length;
+    // One pylon per interior support, so every pylon is standing where the cable
+    // is actually being held up rather than near it.
+    for (let i = 1; i < this.supports.length - 1; i++) {
+      const s = this.supports[i];
       const p = this.at(s);
       const ob = assets.instance(pylonModel);
       ob.position.set(p.x, p.ground, p.z);
@@ -85,6 +195,7 @@ export class Lift {
     // so the terminal is placed such that its wheel lands exactly on the end of
     // the haul rope — which is the whole reason the rope can be drawn wrapping
     // around it instead of stopping in mid air.
+    this.stationPos = [];
     if (stationModel) {
       const head = Math.atan2(this.dir.x, this.dir.y);
       for (const [end, sign, flip] of [[from, +1, 0], [to, -1, Math.PI]]) {
@@ -94,6 +205,7 @@ export class Lift {
         st.position.set(sx, sampler.sampleHeight(sx, sz), sz);
         st.rotation.y = head + flip;
         this.group.add(st);
+        this.stationPos.push({ x: sx, z: sz, y: st.position.y });
       }
     }
 
@@ -228,6 +340,9 @@ export class Resort {
     this.group.name = 'resort';
     this.buildings = [];
     this.zones = [];
+    // Anything out here you can walk into. Collected as it is placed, so the
+    // collider can never disagree with what was actually put on the mountain.
+    this.solidProps = [];
 
     this.buildBase();
     this.buildLifts();
@@ -298,6 +413,8 @@ export class Resort {
     fire.position.set(fx, this.sampler.sampleHeight(fx, fz), fz);
     this.group.add(fire);
     this.fire = { group: fire, flame, light };
+    // You warm your hands at a bonfire; you do not stand in one.
+    this.solidProps.push({ x: fx, z: fz, r: 1.7, kind: 'fire', hard: false, top: fire.position.y + 1.4 });
     this.zones.push({ kind: 'fire', name: 'bonfire', x: fx, z: fz, y: fire.position.y, radius: 5.5 });
 
     this.dressBase(base, face);
@@ -322,39 +439,57 @@ export class Resort {
    * crates outside the rental shop and snow cannons up the runs.
    */
   dressBase(base, face) {
-    const place = (model, x, z, rotY = 0, scale = 1) => {
+    // `solid` is 'box', 'post', or null. The shape comes from the model's own
+    // measurements rather than a number typed in twice.
+    const place = (model, x, z, rotY = 0, scale = 1, solid = null) => {
       const ob = this.assets.instance(model);
-      ob.position.set(x, this.sampler.sampleHeight(x, z), z);
+      const y = this.sampler.sampleHeight(x, z);
+      ob.position.set(x, y, z);
       ob.rotation.y = rotY;
       if (scale !== 1) ob.scale.setScalar(scale);
       this.group.add(ob);
+      if (solid) {
+        const size = this.assets.size(model);
+        const top = y + size.y * scale;
+        if (solid === 'box') {
+          this.solidProps.push({
+            x, z, rotY, kind: model, hard: false, top,
+            hx: size.x * 0.5 * scale * 0.9, hz: size.z * 0.5 * scale * 0.9,
+          });
+        } else {
+          this.solidProps.push({
+            x, z, kind: model, hard: false, top,
+            r: Math.max(size.x, size.z) * 0.5 * scale * 0.75,
+          });
+        }
+      }
       return ob;
     };
 
     // the board everyone reads before their first run
-    place('prop_pistemap', base.x - 4, base.z + 40, face + 0.1);
+    place('prop_pistemap', base.x - 4, base.z + 40, face + 0.1, 1, 'box');
     this.zones.push({ kind: 'map', name: 'piste map', x: base.x - 4, z: base.z + 42, y: 0, radius: 4 });
 
-    place('prop_ticket', base.x + 16, base.z + 46, face - 0.3);
-    place('prop_bench', base.x - 18, base.z + 42, face);
-    place('prop_bench', base.x + 26, base.z + 40, face + 0.4);
-    place('prop_bench', base.x + 2, base.z + 62, face + Math.PI);
-    place('prop_bin', base.x - 9, base.z + 44, 0);
-    place('prop_bin', base.x + 21, base.z + 44, 0);
-    place('prop_crates', base.x - 58, base.z + 32, face + 0.9);
-    place('prop_crates', base.x - 40, base.z + 30, face - 0.4, 0.85);
+    place('prop_ticket', base.x + 16, base.z + 46, face - 0.3, 1, 'box');
+    place('prop_bench', base.x - 18, base.z + 42, face, 1, 'box');
+    place('prop_bench', base.x + 26, base.z + 40, face + 0.4, 1, 'box');
+    place('prop_bench', base.x + 2, base.z + 62, face + Math.PI, 1, 'box');
+    place('prop_bin', base.x - 9, base.z + 44, 0, 1, 'post');
+    place('prop_bin', base.x + 21, base.z + 44, 0, 1, 'post');
+    place('prop_crates', base.x - 58, base.z + 32, face + 0.9, 1, 'box');
+    place('prop_crates', base.x - 40, base.z + 30, face - 0.4, 0.85, 'box');
 
     // fences marking the walkway between the buildings and the lift
     for (let k = 0; k < 4; k++) {
-      place('prop_fence', base.x - 30 + k * 8.1, base.z + 30, 0);
+      place('prop_fence', base.x - 30 + k * 8.1, base.z + 30, 0, 1, 'box');
     }
     for (let k = 0; k < 3; k++) {
-      place('prop_fence', base.x + 34, base.z + 20 + k * 8.1, Math.PI / 2);
+      place('prop_fence', base.x + 34, base.z + 20 + k * 8.1, Math.PI / 2, 1, 'box');
     }
 
     // flags at the arrival plaza
     for (let k = 0; k < 4; k++) {
-      place('prop_flag', base.x - 34 + k * 22, base.z + 66, 0.3 + k * 0.4);
+      place('prop_flag', base.x - 34 + k * 22, base.z + 66, 0.3 + k * 0.4, 1, 'post');
     }
 
     // snow cannons along the lower half of the red and the blue
@@ -370,7 +505,7 @@ export class Resort {
         const side = (i % 68 === 0) ? 1 : -1;
         const cx = x + px * (run.halfWidth + 2.6) * side;
         const cz = z + pz * (run.halfWidth + 2.6) * side;
-        place('prop_cannon', cx, cz, Math.atan2(-px * side, -pz * side));
+        place('prop_cannon', cx, cz, Math.atan2(-px * side, -pz * side), 1, 'post');
       }
     }
   }
@@ -406,11 +541,21 @@ export class Resort {
     g.rotation.y = rotY;
     this.group.add(g);
     this.floodlights.push({ group: g, light, lens });
+    this.solidProps.push({ x, z, r: 0.30, kind: 'mast', hard: true, top: y + 8.5 });
   }
 
   buildLifts() {
     const base = this.terrain.stations.base;
     const summit = this.terrain.stations.summit;
+    // A pylon in the middle of a run is a hazard nobody put there on purpose.
+    // Checking a small ring as well as the point keeps them off the shoulder too.
+    const offPiste = (x, z) => {
+      if (this.sampler.samplePiste(x, z) !== PISTE_OFF) return false;
+      for (const [dx, dz] of [[3, 0], [-3, 0], [0, 3], [0, -3]]) {
+        if (this.sampler.samplePiste(x + dx, z + dz) !== PISTE_OFF) return false;
+      }
+      return true;
+    };
 
     // The chair runs the full mountain. At a realistic 5 m/s this line would take
     // four minutes, which is four minutes of nobody skiing, so it runs fast and
@@ -426,6 +571,7 @@ export class Resort {
       pylonModel: 'lift_pylon',
       carrierModel: 'chair_five',
       stationModel: 'lift_station',
+      canSupport: offPiste,
     });
     this.group.add(this.chair.group);
 
@@ -444,6 +590,7 @@ export class Resort {
       pylonModel: 'drag_pylon',
       carrierModel: 'tbar',
       stationModel: null,
+      canSupport: offPiste,
     });
     this.group.add(this.drag.group);
 

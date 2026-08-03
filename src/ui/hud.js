@@ -280,6 +280,17 @@ export class HUD {
     const chill = Math.max(0, 1 - s.warmth * 1.4);
     this.node.style.setProperty('--chill', chill.toFixed(3));
 
+    // The HUD gets out of the way once you are moving. It is at full size while
+    // you are stood in the resort reading it, and three quarters of that by the
+    // time the mountain is worth looking at instead.
+    const riding = g.equipped && t.speed > 4 && !g.panels.isOpen;
+    const wantScale = riding ? 0.74 : 1;
+    this.hudScale = this.hudScale === undefined
+      ? wantScale
+      : this.hudScale + (wantScale - this.hudScale) * Math.min(1, dt * 4);
+    this.node.style.setProperty('--hud', this.hudScale.toFixed(3));
+    this.node.classList.toggle('hud--riding', riding);
+
     this.updateDebug();
   }
 

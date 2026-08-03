@@ -3,6 +3,7 @@
 
 import { generateTerrain, makeSampler, PISTE_OFF } from '../src/shared/terrain.js';
 import { SnowField, SNOW_W, SNOW_H } from '../src/shared/snowfield.js';
+import { cableProfile, sampleLine } from '../src/world/resort.js';
 
 let failures = 0;
 const results = [];
@@ -228,6 +229,47 @@ snow.markAll();
 const t2 = Date.now();
 snow.snapshot();
 console.log(`full snapshot encode: ${Date.now() - t2} ms`);
+
+// ---- the lifts have to hang at a height a person would recognise
+//
+// This is here because the first version got it badly wrong in a way no test was
+// watching: the cable profile was a smoothed envelope, the smoothing could only
+// raise it, and the error compounded up the mountain until the chair rode an
+// average of twelve metres above the snow. Nothing in the game complained.
+
+const blueRun = terrain.runs.find((r) => r.key === 'blue');
+const dragBottom = blueRun.line[blueRun.line.length - 12];
+const dragMid = blueRun.line[Math.floor(blueRun.line.length * 0.70)];
+
+for (const l of [
+  { name: 'chairlift', from: { x: terrain.stations.base.x + 16, z: terrain.stations.base.z - 14 },
+    to: { x: terrain.stations.summit.x + 4, z: terrain.stations.summit.z + 26 },
+    pylonSpacing: 88, clearance: 6.0, hanger: 3.58, seat: 1.04, limit: 9.5 },
+  { name: 'drag lift', from: { x: dragBottom[0] - 22, z: dragBottom[1] - 6 },
+    to: { x: dragMid[0] - 16, z: dragMid[1] },
+    pylonSpacing: 44, clearance: 4.4, hanger: 3.5, seat: 0, limit: 7.0 },
+]) {
+  const { pts, length } = sampleLine(s, l.from, l.to, 8);
+  const spans = Math.max(2, Math.round(length / l.pylonSpacing));
+  const { heights, supports } = cableProfile(pts, length, spans, l.clearance);
+  const clear = pts.map((p, i) => heights[i] - p.ground);
+  const rider = clear.map((c) => c - l.hanger + l.seat);
+  const min = Math.min(...clear), max = Math.max(...clear);
+  const meanRider = rider.reduce((a, b) => a + b, 0) / rider.length;
+  // A single gully the line has to fly over is terrain, not a bug — what matters
+  // is the height for the ride, so the check is on the 95th percentile and the
+  // maximum only has to stay off the old runaway numbers.
+  const sorted = [...clear].sort((a, b) => a - b);
+  const p95 = sorted[Math.floor(0.95 * (sorted.length - 1))];
+  console.log(`\n${l.name}: ${length.toFixed(0)} m, ${supports.length - 2} pylons — `
+    + `cable ${min.toFixed(1)}–${max.toFixed(1)} m up (95% of it under ${p95.toFixed(1)} m), `
+    + `rider averages ${meanRider.toFixed(1)} m above the snow`);
+  check(`${l.name} always clears the ground`, min > l.clearance - 0.6, `${min.toFixed(2)} m`);
+  check(`${l.name} rides low for all but the odd gully`, p95 < l.limit, `95th percentile ${p95.toFixed(2)} m`);
+  check(`${l.name} never flies over the mountain`, max < l.limit * 2.6, `worst ${max.toFixed(2)} m`);
+  check(`${l.name} puts the rider within reach of the snow`,
+    meanRider > 0.4 && meanRider < l.clearance - 1.0, `${meanRider.toFixed(2)} m`);
+}
 
 console.log('\n' + results.join('\n'));
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);

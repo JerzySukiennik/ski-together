@@ -154,13 +154,21 @@ check('ice makes the edge let go', ice.skid > corduroy.skid + 0.15,
   `${(ice.skid * 100).toFixed(0)}% vs ${(corduroy.skid * 100).toFixed(0)}%`);
 
 // The question that matters on ice is not "does it slide" — everything slides —
-// but "can you still make the turn". Measure the turn you actually get.
+// but "can you still make the turn".
+//
+// Measure where the skier is GOING, not where the skis are pointing. Anyone can
+// twist their skis across the hill on ice; that is the easy part, and it is the
+// part that stays the same whatever is on your feet. What a race ski buys you is
+// the edge actually biting, so the path bends instead of the skier sliding on
+// down the fall line pointing sideways. Measuring heading measures the free part
+// and hides the paid one.
 function turnHeldOnIce(gearId) {
   const s = rider(slopeWorld(0.275, { cond: 8 }), gearId);
   run(s, 7);
-  const h0 = s.heading;
+  const travel = () => Math.atan2(s.vel.x, s.vel.z);
+  const t0 = travel();
   run(s, 2.5, () => ({ steer: 0.7 }));
-  return Math.abs(wrap(s.heading - h0)) * 180 / Math.PI;
+  return Math.abs(wrap(travel() - t0)) * 180 / Math.PI;
 }
 const rentalIce = turnHeldOnIce('ski-piste74');
 const raceIce = turnHeldOnIce('ski-race66');

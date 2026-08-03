@@ -146,7 +146,7 @@ export class Skier {
     const grounded = this.pos.y <= ground + 0.03 && this.vel.y <= 0.6;
 
     if (boots) {
-      this.stepWalk(dt, input, ground, N);
+      this.stepWalk(dt, input, ground, N, ctx);
       return;
     }
 
@@ -178,7 +178,8 @@ export class Skier {
     const steer = input.steer || 0;
     const target = THREE.MathUtils.clamp(steer, -1, 1);
     // The edge takes a moment to set — that delay is the whole feel of a turn.
-    const edgeRate = 4.4;
+    // It used to take half a second, which reads as the skis not answering.
+    const edgeRate = this.edge * target < 0 ? 9.5 : 6.6; // rolling off an edge is quicker than onto one
     this.edge += (target - this.edge) * Math.min(1, edgeRate * dt);
     const braking = input.brake || 0;
     const tucking = input.tuck && braking === 0 ? 1 : 0;
@@ -213,16 +214,35 @@ export class Skier {
       Math.abs(vLat) / (Math.abs(vForward) * 0.30 + 0.9), 0, 1,
     );
 
-    // --- turning. A carve that grips turns the ski; a skid mostly just scrubs.
-    const turnAuthority = 1 - 0.72 * skid;
+    // --- turning, which is two separate things a skier does at once.
+    //
+    // Carving is the arc the edged ski describes on its own: it needs grip and it
+    // needs speed, and it is what the whole gear model is about. Pivoting is
+    // twisting the skis across the direction of travel — it works standing still,
+    // it works on ice, and it is what a hockey stop is made of. Modelling only the
+    // first is why the skis felt like they were on rails one moment and dead the
+    // next: as soon as the edge let go there was nothing left to steer with.
+    const turnAuthority = 1 - 0.45 * skid;
     // Heading grows anticlockwise (three.js rotation.y) while positive steer means
-    // right, so the turn rate carries a minus sign.
-    this.heading += -curvature * vForward * turnAuthority * dt;
-
-    // Standing still you can still shuffle the tips around.
-    if (speed < 2.2) {
-      this.heading += -steer * (2.2 - speed) * 0.9 * dt;
-    }
+    // right, so both turn rates carry a minus sign.
+    const carveRate = -curvature * vForward * turnAuthority;
+    // Pivot authority falls away with speed — at 80 km/h you steer with the edge,
+    // not by twisting — and braking hands it straight back, which is exactly the
+    // bargain a real skier makes when they throw the skis sideways to scrub speed.
+    const pivotAuthority = 0.22 + 0.78 / (1 + speed * 0.34);
+    // The pivot is what STARTS a turn, not something applied all the way through
+    // one. Driving it from the steering the edge has not taken up yet means it
+    // fires hard the moment you ask for a turn and fades to nothing once the ski
+    // is carving — so initiation is sharp and the steady arc is still the arc the
+    // gear promises. Applied continuously it quietly halved every printed turn
+    // radius in the shop, which the acceptance test caught.
+    const residual = target - this.edge;
+    // Standing about, there is no edge to take anything up, so steer directly.
+    const slow = 1 - THREE.MathUtils.clamp(speed / 3.5, 0, 1);
+    const pivotInput = residual * (1 - slow) + target * slow;
+    const pivotRate = -(pivotInput * 2.6 + target * braking * 3.6) * pivotAuthority;
+    this.heading += (carveRate + pivotRate) * dt;
+    this.telemetry.turnRate = carveRate + pivotRate;
 
     // --- drag
     const airK = tucking ? AIR_K_TUCK : AIR_K;
@@ -248,17 +268,39 @@ export class Skier {
     }
 
     // --- herringbone / skating on the flat and uphill
+    //
+    // This is a person kicking off one ski and then the other, so the force
+    // arrives in pulses rather than as a motor holding a constant thrust — and it
+    // fades out as you reach the speed a kick can no longer add to, instead of
+    // stopping dead at a threshold.
     const uphill = -slopeAcc.dot(fwd); // positive when the slope pushes you back
-    if (input.throttle && speed < 4.8 && this.stamina > 0.02) {
-      // Herringbone on skis, skating on a board. The skis win on the flat because
-      // two edges biting outwards beat one board being kicked along.
-      const push = gear.kind === 'ski' ? 3.1 : 2.9;
-      acc.addScaledVector(fwd, push);
-      this.stamina = Math.max(0, this.stamina - dt * (0.030 + 0.09 * Math.max(0, uphill / G)));
-      this.telemetry.pushing = true;
-      this.pushPhase = (this.pushPhase || 0) + dt * (5.2 + speed * 1.1);
+    if (input.throttle && this.stamina > 0.02) {
+      const fade = 1 - THREE.MathUtils.clamp((speed - 3.4) / 2.6, 0, 1);
+      if (fade > 0.001) {
+        this.pushPhase = (this.pushPhase || 0) + dt * (4.7 + speed * 0.95);
+        const kick = 0.42 + 0.58 * Math.max(0, Math.sin(this.pushPhase));
+        // The skis win on the flat because two edges biting outwards beat one
+        // board being kicked along.
+        const push = (gear.kind === 'ski' ? 3.9 : 3.4) * fade * kick;
+        acc.addScaledVector(fwd, push);
+        this.stamina = Math.max(0, this.stamina - dt * (0.030 + 0.09 * Math.max(0, uphill / G)));
+        this.telemetry.pushing = true;
+        this.telemetry.pushKick = kick;
+      } else {
+        this.telemetry.pushing = false;
+      }
     } else {
       this.telemetry.pushing = false;
+    }
+
+    // Shuffling backwards. At walking pace the brake key has nothing to brake, and
+    // stepping back a metre is the difference between reaching the lift gate and
+    // having to loop round the whole plaza to try again.
+    if (braking > 0 && speed < 1.8) {
+      acc.addScaledVector(fwd, -2.4 * (1 - speed / 1.8));
+      this.telemetry.shuffling = true;
+    } else {
+      this.telemetry.shuffling = false;
     }
 
     this.vel.addScaledVector(acc, dt);
@@ -287,8 +329,10 @@ export class Skier {
 
     this.cutSnow(dt, surf, skid, speed, braking, fwd, right);
 
-    // --- crash: hitting a wall of snow sideways at speed
-    if (speed > 11 && skid > 0.92 && Math.abs(vLat) > 7.5) {
+    // --- crash: hitting a wall of snow sideways at speed.
+    // A deliberate hockey stop throws the skis right across the hill and must not
+    // be punished, so this only fires well past what a controlled skid reaches.
+    if (speed > 13 && skid > 0.94 && Math.abs(vLat) > 9.5) {
       this.crash('caught an edge');
     }
 
@@ -407,7 +451,7 @@ export class Skier {
 
   // ------------------------------------------------------------------ walking
 
-  stepWalk(dt, input, ground, N) {
+  stepWalk(dt, input, ground, N, ctx = {}) {
     this.mode = MODE.WALK;
     const surf = this.world.snow.surfaceAt(this.pos.x, this.pos.z);
     const gear = this.stats;
@@ -428,9 +472,32 @@ export class Skier {
     const uphillPenalty = 1 - THREE.MathUtils.clamp((steepness - 0.16) / 0.75, 0, 0.5);
     speedCap *= uphillPenalty * (0.78 + 0.22 * this.stamina);
 
-    this.heading += -(input.steer || 0) * 2.6 * dt;
-    const fwd = this.forwardVector(_f);
-    const wish = _a.copy(fwd).multiplyScalar((input.throttle || 0) - (input.brake || 0) * 0.55);
+    // On foot the keys move you where the camera is looking and the body turns to
+    // follow, rather than steering you like a tank. Skiing keeps A and D as the
+    // edge, because on skis that IS the control — but nobody walks that way, and
+    // walking is most of what happens between the buildings.
+    const camYaw = ctx.camYaw;
+    const fx = (input.throttle || 0) - (input.brake || 0);
+    const sx = input.steer || 0;
+    const wish = _a.set(0, 0, 0);
+    if (camYaw !== undefined) {
+      const cf = _d.set(Math.sin(camYaw), 0, Math.cos(camYaw));
+      const cr = _g.set(Math.cos(camYaw), 0, -Math.sin(camYaw));
+      wish.addScaledVector(cf, fx).addScaledVector(cr, sx);
+      if (wish.lengthSq() > 1) wish.normalize();
+      if (wish.lengthSq() > 0.01) {
+        // Turn towards where you are going, fast enough to feel immediate and slow
+        // enough that it reads as a person pivoting rather than a sprite flipping.
+        const want = Math.atan2(wish.x, wish.z);
+        let delta = want - this.heading;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        this.heading += delta * Math.min(1, 11 * dt);
+      }
+    } else {
+      this.heading += -sx * 2.6 * dt;
+      wish.copy(this.forwardVector(_f)).multiplyScalar(fx);
+    }
 
     const target = _d.copy(wish).multiplyScalar(speedCap);
     const accel = slip > 0 ? 5 * (1 - slip * 0.75) : 16;
@@ -457,7 +524,8 @@ export class Skier {
     const moved = Math.hypot(this.vel.x, this.vel.z) * dt;
     if (moved > 0.001) {
       const dose = moved / (2 * 0.28);
-      this.world.snow.pass(this.pos.x, this.pos.z, 0.28, 5 * dose, (surf.kind === 'powder' ? 55 : 16) * dose);
+      this.world.snow.pass(this.pos.x, this.pos.z, 0.28, 11 * dose,
+        (surf.kind === 'powder' ? 110 : 38) * dose);
     }
 
     this.telemetry.speed = Math.hypot(this.vel.x, this.vel.z);
@@ -477,6 +545,7 @@ export class Skier {
 
   integrate(dt) {
     this.pos.addScaledVector(this.vel, dt);
+    this.hitObstacle(dt);
     // The world ends at the ridge line; nobody skis off the edge of the map.
     const limit = 740;
     if (Math.abs(this.pos.x) > limit) {
@@ -489,14 +558,56 @@ export class Skier {
     }
   }
 
+  /**
+   * Everything standing on the mountain. Walking into a wall slides you along it;
+   * skiing into a tree at speed does what skiing into a tree at speed does.
+   */
+  hitObstacle(dt) {
+    // Sliding along a wall contacts it on every substep, so without a cooldown a
+    // graze would fire a hundred and twenty impacts a second.
+    this.bumpCooldown = Math.max(0, (this.bumpCooldown || 0) - dt);
+    const colliders = this.world.colliders;
+    if (!colliders || this.mode === MODE.CRASH) return;
+    const hit = colliders.resolve(this.pos, 0.42, this.pos.y + 0.9);
+    if (!hit) return;
+
+    // Kill only the part of the velocity going into the surface, so a shoulder
+    // against a wall turns into sliding down it rather than stopping dead.
+    const into = this.vel.x * hit.nx + this.vel.z * hit.nz;
+    if (into < 0) {
+      this.vel.x -= hit.nx * into;
+      this.vel.z -= hit.nz * into;
+      const closing = -into;
+      if (this.isRiding && closing > 5.5 && hit.hard) {
+        this.telemetry.thud = Math.min(1, closing / 12);
+        this.crash(hit.kind === 'tree' ? 'hit a tree' : `hit a ${hit.kind}`);
+        return;
+      }
+      // Below that it is a scrape: it costs you speed and you carry on.
+      if (closing > 1.5) {
+        this.vel.multiplyScalar(Math.max(0.35, 1 - closing * 0.05));
+        if (this.bumpCooldown === 0) {
+          this.bumpCooldown = 0.35;
+          this.emit('bump', { kind: hit.kind, force: Math.min(1, closing / 8) });
+        }
+      }
+    }
+  }
+
   cutSnow(dt, surf, skid, speed, braking, fwd, right) {
     const moved = speed * dt;
     if (moved < 0.0005) return;
     const radius = this.stats.kind === 'ski' ? 0.30 : 0.42;
     const dose = moved / (2 * radius);
     // A clean carve polishes; a skid tears the surface off.
-    const wear = (2.6 + skid * 26 + braking * 20) * dose;
-    const cut = (3.4 + skid * 30 + braking * 22) * dose * (surf.kind === 'powder' ? 2.4 : 1);
+    //
+    // These numbers used to be about four times smaller, which meant one pass
+    // moved the snow by roughly one percent — the mountain wore out over a day
+    // exactly as designed, but a player who skied down and looked behind them saw
+    // nothing at all. A ski leaves a mark the FIRST time, and the day-long wear
+    // has to be built out of marks you can see, not underneath them.
+    const wear = (7.0 + skid * 30 + braking * 24) * dose;
+    const cut = (12.0 + skid * 34 + braking * 26) * dose * (surf.kind === 'powder' ? 2.4 : 1);
     if (this.stats.kind === 'ski') {
       const off = 0.17;
       this.world.snow.pass(this.pos.x - right.x * off, this.pos.z - right.z * off, radius, wear, cut);

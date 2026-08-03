@@ -121,6 +121,14 @@ export class Groomer {
     this.pos.x = THREE.MathUtils.clamp(this.pos.x, -limit, limit);
     this.pos.z = THREE.MathUtils.clamp(this.pos.z, -limit, limit);
 
+    // Twelve tonnes of machine still does not go through a pylon. It is wide, so
+    // it gets a wide radius, and hitting something simply stops it.
+    const hit = this.world.colliders?.resolve(this.pos, 2.1, this.pos.y + 1.2);
+    if (hit && this.speed !== 0) {
+      const fwdInto = -(fx * hit.nx + fz * hit.nz) * Math.sign(this.speed);
+      if (fwdInto > 0) this.speed *= 0.2;
+    }
+
     this.place();
 
     if (this.tillerDown && Math.abs(this.speed) > 0.15) {

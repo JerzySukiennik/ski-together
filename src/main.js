@@ -10,6 +10,7 @@ import { FollowCamera } from './player/followCamera.js';
 import { AssetLibrary } from './world/assets.js';
 import { scatterTrees, scatterRocks, TreeField, PisteFurniture } from './world/props.js';
 import { Resort, LiftRide } from './world/resort.js';
+import { buildColliders } from './world/collision.js';
 import { Avatar, LostGear, DEFAULT_COLOURS } from './player/avatar.js';
 import { Groomer } from './world/groomer.js';
 import { SnowSpray } from './world/spray.js';
@@ -85,6 +86,11 @@ export class Game {
 
     this.furniture = await step('Setting out the poles', () => new PisteFurniture(this.assets, this.terrain, this.sampler));
     this.engine.scene.add(this.furniture.group);
+
+    // Everything solid, gathered from the same lists that placed it.
+    this.colliders = await step('Making it all solid',
+      () => buildColliders(this.assets, this.resort, trees, rocks, this.furniture));
+    this.world.colliders = this.colliders;
 
     // --- the player arrives on foot with nothing rented
     this.skier = new Skier(this.world, { name: this.state.name });
@@ -184,6 +190,9 @@ export class Game {
     const ctx = {
       night: this.sky.nightAmount,
       onFoot: !this.equipped || this.state.lostGear,
+      // Walking is camera-relative, so the walk code needs to know where the
+      // camera is actually pointing. One frame stale and nobody could tell.
+      camYaw: this.camera.worldYaw,
       warming,
       sheltered: zone && ['cafe', 'rental', 'booth'].includes(zone.kind) ? 1 : 0,
     };
@@ -273,10 +282,15 @@ export class Game {
         this.state.tricks++;
         this.award(e.score, e.name);
         this.hud.showTrick(e);
-        this.audio.play('trick');
+        this.audio.play(e.score > 140 ? 'trick_big' : 'trick');
       } else if (e.type === 'crash') {
         this.state.crashes++;
         this.onCrash(e);
+      } else if (e.type === 'bump') {
+        // Clipping something has to be audible, or the new solid world just feels
+        // like the controls sticking.
+        this.audio.play(e.kind === 'pylon' || e.kind === 'mast' ? 'clang' : 'bump',
+          { volume: 0.35 + e.force * 0.5 });
       }
       this.fire(e.type, e);
     }
@@ -341,7 +355,7 @@ export class Game {
       this.prompt = carrier
         ? { key: 'F', text: lift.kind === 'chair' ? 'Ride the chairlift' : 'Take the drag lift' }
         : { key: null, text: 'Wait for the next one' };
-      if (carrier && press && this.ride.tryBoard(lift)) this.audio.play('click');
+      if (carrier && press && this.ride.tryBoard(lift)) this.audio.play('board');
       return;
     }
 
@@ -362,7 +376,7 @@ export class Game {
         : { key: null, text: 'The groomer key is at the cafe counter', blocked: true };
       if (this.state.consumables.groomerKey && press) {
         this.groomer.mount(this.skier);
-        this.audio.play('engine');
+        this.audio.play('clang');
       }
     } else if (zone.kind === 'fire') {
       this.prompt = { key: null, text: 'Warming up' };

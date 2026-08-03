@@ -231,7 +231,22 @@ html, body {
   pointer-events: none;
   z-index: 10;
   --chill: 0;
+  /* How much of the screen the HUD is allowed to take. It stands down while you
+     are actually skiing: at speed the mountain is the thing to look at, and a
+     sixty-two pixel speed readout in the corner of a descent is furniture. */
+  --hud: 1;
 }
+
+.rail, .cluster, .board {
+  transform-origin: var(--anchor, left bottom);
+  transition: transform 420ms var(--ease), opacity 420ms var(--ease);
+}
+
+/* Riding: everything shrinks, and the things you do not read at speed fade back.
+   The speed itself stays legible, because that one IS read at speed. */
+.hud--riding .rail { opacity: 0.5; }
+.hud--riding .board { opacity: 0.42; }
+.hud--riding .vitals { opacity: 0.55; }
 
 .hud::after {
   content: '';
@@ -257,9 +272,11 @@ html, body {
   left: 20px;
   top: 45%;
   transform: translateY(-50%);
+  --anchor: left center;
+  transform: translateY(-50%) scale(var(--hud));
   /* The viewBox is 92 x 400, so the box has to keep that ratio or the tick
      labels stretch into something nobody can read. */
-  --rail-h: min(54vh, 420px);
+  --rail-h: min(42vh, 330px);
   height: calc(var(--rail-h) + 52px);
   width: calc(var(--rail-h) * 0.23 + 22px);
   padding: 10px 11px 9px;
@@ -332,6 +349,8 @@ html, body {
   display: flex;
   align-items: flex-end;
   gap: 20px;
+  --anchor: left bottom;
+  transform: scale(var(--hud));
 }
 
 .vitals {
@@ -377,7 +396,7 @@ html, body {
 
 .speed__value {
   grid-row: 1;
-  font-size: 62px;
+  font-size: 46px;
   font-weight: 600;
   line-height: 0.82;
   letter-spacing: -0.02em;
@@ -420,6 +439,8 @@ html, body {
   border: 1px solid var(--hairline);
   border-left: var(--band) solid var(--sun);
   border-radius: var(--radius);
+  --anchor: right top;
+  transform: scale(var(--hud));
 }
 
 .board__head { display: flex; justify-content: space-between; align-items: baseline; }

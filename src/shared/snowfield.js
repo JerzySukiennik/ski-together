@@ -26,6 +26,23 @@ export const PISTE_START_COND = 255;
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
+/**
+ * Turn a fractional dose into whole bytes without losing the fraction.
+ *
+ * A cell holds one byte, and the physics runs at 120 Hz, so a single substep
+ * deposits well under one unit — and `value + 0.4 | 0` is exactly `value`. Every
+ * dose below one was being thrown away, and since a clean carve at speed IS a
+ * sequence of small doses, a ski could run the length of the mountain and leave
+ * the snow bit-for-bit untouched. That is why nothing left tracks.
+ *
+ * Carrying the fraction as a probability costs no memory and is exact on average,
+ * which for a surface made of snow grains is also the honest model.
+ */
+function quantise(amount) {
+  const whole = Math.floor(amount);
+  return whole + (Math.random() < amount - whole ? 1 : 0);
+}
+
 export class SnowField {
   constructor(terrain) {
     this.terrain = terrain;
@@ -33,7 +50,11 @@ export class SnowField {
     this.carve = new Uint8Array(SNOW_W * SNOW_H);
     // Cells that are on a piste; off-piste behaves as powder and cannot be groomed.
     this.onPiste = new Uint8Array(SNOW_W * SNOW_H);
-    this.dirty = null;
+    // Two consumers want to know what changed, and they consume at different
+    // rates: the renderer every frame, the network twenty times a second. One
+    // shared rectangle means whoever asks first empties it — which on a host
+    // would quietly stop the snow updating on their own screen.
+    this.dirty = { gpu: null, net: null };
     this.version = 0;
     this.groomedArea = 0; // m^2 restored this session, for scoring
     this.reset();
@@ -60,24 +81,27 @@ export class SnowField {
   }
 
   markAll() {
-    this.dirty = { i0: 0, j0: 0, i1: SNOW_W - 1, j1: SNOW_H - 1 };
+    this.markDirty(0, 0, SNOW_W - 1, SNOW_H - 1);
     this.version++;
   }
 
   markDirty(i0, j0, i1, j1) {
-    if (!this.dirty) this.dirty = { i0, j0, i1, j1 };
-    else {
-      const d = this.dirty;
-      if (i0 < d.i0) d.i0 = i0;
-      if (j0 < d.j0) d.j0 = j0;
-      if (i1 > d.i1) d.i1 = i1;
-      if (j1 > d.j1) d.j1 = j1;
+    for (const ch of ['gpu', 'net']) {
+      const d = this.dirty[ch];
+      if (!d) this.dirty[ch] = { i0, j0, i1, j1 };
+      else {
+        if (i0 < d.i0) d.i0 = i0;
+        if (j0 < d.j0) d.j0 = j0;
+        if (i1 > d.i1) d.i1 = i1;
+        if (j1 > d.j1) d.j1 = j1;
+      }
     }
   }
 
-  takeDirty() {
-    const d = this.dirty;
-    this.dirty = null;
+  /** @param channel 'gpu' for the renderer, 'net' for the wire. */
+  takeDirty(channel = 'gpu') {
+    const d = this.dirty[channel];
+    this.dirty[channel] = null;
     return d;
   }
 
@@ -139,12 +163,12 @@ export class SnowField {
         const falloff = 1 - d2 / r2;
         const k = j * SNOW_W + i;
         if (wear > 0) {
-          const w = this.cond[k] - wear * falloff;
-          this.cond[k] = w < 0 ? 0 : w | 0;
+          const w = this.cond[k] - quantise(wear * falloff);
+          this.cond[k] = w < 0 ? 0 : w;
         }
         if (cut > 0) {
-          const v = this.carve[k] + cut * falloff;
-          this.carve[k] = v > 255 ? 255 : v | 0;
+          const v = this.carve[k] + quantise(cut * falloff);
+          this.carve[k] = v > 255 ? 255 : v;
         }
       }
     }
@@ -254,7 +278,7 @@ export class SnowField {
 
   /** Only the rectangle that changed since the last call, as a flat patch. */
   takePatch() {
-    const d = this.takeDirty();
+    const d = this.takeDirty('net');
     if (!d) return null;
     const w = d.i1 - d.i0 + 1, h = d.j1 - d.j0 + 1;
     if (w <= 0 || h <= 0) return null;

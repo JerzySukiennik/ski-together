@@ -303,6 +303,9 @@ export class PisteFurniture {
     this.sampler = sampler;
     this.gates = [];
     this.rails = [];
+    // Netting and signposts stop you; marker and gate poles do not, because the
+    // real ones are hinged and knocking one flat is part of skiing.
+    this.solids = [];
     this.batches = {};
     this.build();
     this.flush();
@@ -404,20 +407,31 @@ export class PisteFurniture {
         const len = Math.hypot(dx, dz) || 1;
         const px = -dz / len * side, pz = dx / len * side;
         const w = run.halfWidth + 2.6;
-        this.place('safety_net', b[0] + px * w, b[1] + pz * w,
+        const net = this.place('safety_net', b[0] + px * w, b[1] + pz * w,
           Math.atan2(dx, dz), 1, 0, true);
+        const netSize = this.assets.size('safety_net');
+        this.solids.push({
+          x: net.position.x, z: net.position.z, rotY: Math.atan2(dx, dz),
+          hx: netSize.x * 0.5, hz: Math.max(netSize.z * 0.5, 0.25),
+          kind: 'net', hard: false, top: net.position.y + netSize.y,
+        });
         i += 8;
       }
     }
 
     // --- signage where the runs leave the summit and where the black joins the red
     const summit = terrain.stations.summit;
-    this.place('signpost', summit.x + 7, summit.z + 11, -0.5, 1, 0, true);
-    this.place('signpost', summit.x - 9, summit.z + 8, 0.7, 1, 0, true);
+    const sign = (x, z, rot) => {
+      const p = this.place('signpost', x, z, rot, 1, 0, true);
+      const size = this.assets.size('signpost');
+      this.solids.push({ x, z, r: 0.26, kind: 'signpost', hard: false, top: p.position.y + size.y });
+    };
+    sign(summit.x + 7, summit.z + 11, -0.5);
+    sign(summit.x - 9, summit.z + 8, 0.7);
     const black = terrain.runs.find((r) => r.key === 'black');
     if (black) {
       const end = black.line[black.line.length - 3];
-      this.place('signpost', end[0] + 6, end[1] - 4, 1.9, 1, 0, true);
+      sign(end[0] + 6, end[1] - 4, 1.9);
     }
   }
 }

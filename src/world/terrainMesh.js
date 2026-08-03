@@ -155,7 +155,7 @@ export class SnowTextureBridge {
   }
 
   flush() {
-    const rect = this.snow.takeDirty();
+    const rect = this.snow.takeDirty('gpu');
     if (!rect) return 0;
     const { i0, j0, i1, j1 } = rect;
     const w = i1 - i0 + 1, h = j1 - j0 + 1;
@@ -294,6 +294,8 @@ uniform vec3 uFogColour;
 uniform float uFogDensity;
 uniform float uWorld;
 uniform float uHalf;
+uniform float uHMin;
+uniform float uHRange;
 uniform vec2 uSnowSize;
 uniform float uCarveMax;
 uniform float uDetail;
@@ -324,6 +326,44 @@ float vnoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
              mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float heightAt(vec2 world) {
+  vec4 c = texture2D(uHeight, (world + uHalf) / uWorld);
+  return uHMin + (c.r * 65536.0 + c.g * 256.0 + c.b) * (255.0 / 16777215.0) * uHRange;
+}
+
+// How much of the sky this patch can actually see. Snow is lit almost entirely by
+// the dome above it, so without this a hollow and a shoulder receive identical
+// ambient and the mountain reads as a flat white sheet — which is exactly what it
+// did. Four directions is enough: the eye is reading the trend, not the detail.
+float skyOcclusion(vec2 world, float h) {
+  float occ = 0.0;
+  for (int i = 0; i < 4; i++) {
+    float a = float(i) * 1.5708 + 0.7854;
+    vec2 d = vec2(cos(a), sin(a));
+    float m = max((heightAt(world + d * 11.0) - h) / 11.0,
+                  (heightAt(world + d * 38.0) - h) / 38.0);
+    occ += clamp(m, 0.0, 1.0);
+  }
+  return occ * 0.25;
+}
+
+// Does anything upslope stand between this patch and the sun? Marching the height
+// field towards the sun is what puts a shadow on the lee side of every roll, and a
+// shadow is the only cue that tells a bump from a dip on a surface this white.
+float sunShadow(vec2 world, float h) {
+  vec2 sd = uSunDir.xz;
+  float flat_ = length(sd);
+  if (flat_ < 1e-3) return 0.0;
+  sd /= flat_;
+  float rise = uSunDir.y / flat_;
+  float over = 0.0;
+  for (int i = 1; i <= 5; i++) {
+    float t = float(i) * float(i) * 2.2; // 2.2 .. 55 m, dense where it matters
+    over = max(over, (heightAt(world + sd * t) - (h + rise * t)) / t);
+  }
+  return smoothstep(0.004, 0.085, over);
 }
 
 vec3 ggx(vec3 N, vec3 V, vec3 L, float rough, vec3 F0) {
@@ -369,7 +409,10 @@ void main() {
   // tap IS the slope — no extra scaling needed.
   vec3 carveN = normalize(vec3((cl - cr) * uCarveMax, 1.0, (cd - cu) * uCarveMax));
 
-  vec3 N = normalize(baseN + vec3(carveN.x, 0.0, carveN.z) * 2.2 * vSnowMask);
+  // A four-centimetre rut across a metre of ground is a two-degree tilt, which is
+  // nothing. Exaggerating the groove's own normal is what turns the depth data
+  // into something the eye can pick out of a white field.
+  vec3 N = normalize(baseN + vec3(carveN.x, 0.0, carveN.z) * 9.0 * vSnowMask);
 
   // Corduroy. A groomer drives up and down the fall line and its tiller leaves
   // ridges across it, so the grooves are lines of constant altitude. Taking the
@@ -383,9 +426,26 @@ void main() {
   vec2 fall = vec2(wideN.x, wideN.z);
   float fallLen = length(fall);
   fall = fallLen > 0.02 ? fall / fallLen : vec2(0.0, 1.0);
-  float groom = sin(dot(vWorld.xz, fall) * 7.4);
-  float crisp = smoothstep(0.72, 0.995, cond) * (1.0 - smoothstep(0.0, 0.3, carve)) * pisteMask;
-  N = normalize(N + vec3(fall.x, 0.0, fall.y) * groom * 0.10 * crisp * uDetail);
+  // The phase comes from ALTITUDE, not from a dot product with the fall line.
+  //
+  // A tiller leaves ridges across the fall line, which means they are lines of
+  // constant height — so height is the phase, full stop. Taking the phase from
+  // dot(position, falldirection) gives the same lines only where the fall line
+  // is constant: everywhere else the direction rotates from pixel to pixel, and a
+  // wave whose direction rotates interferes with itself. That is what covered the
+  // pistes in swirling rings. Height cannot interfere with anything.
+  float groom = sin(vWorld.y * 74.0);
+  // Corduroy survives nothing: the first ski across a groomed line wipes the
+  // tiller marks out, which is half of why a fresh track shows up at all.
+  float crisp = smoothstep(0.72, 0.995, cond) * (1.0 - smoothstep(0.0, 0.10, carve)) * pisteMask;
+  // Where the ground is nearly level the fall line has no direction to speak of,
+  // so it spins with the noise in the normal — and a sine wave whose direction
+  // spins draws interference rings. The whole plaza was covered in swirls. Fade
+  // the corduroy out where there is no slope to lay it down, and fade it out with
+  // distance too: it is a ten-centimetre feature and past a certain range it can
+  // only alias.
+  crisp *= smoothstep(0.045, 0.20, fallLen) * (1.0 - smoothstep(22.0, 75.0, vDist));
+  N = normalize(N + vec3(fall.x, 0.0, fall.y) * groom * 0.065 * crisp * uDetail);
 
   // Wind-blown micro relief everywhere, finer close up.
   if (uDetail > 0.5) {
@@ -396,9 +456,16 @@ void main() {
   }
 
   // ---- material by condition
-  vec3 snowAlbedo = vec3(0.90, 0.925, 0.965);
-  vec3 iceAlbedo = vec3(0.60, 0.70, 0.80);
-  vec3 rockAlbedo = vec3(0.20, 0.19, 0.18);
+  //
+  // Snow's real albedo is high, but rendering it high is what turned the mountain
+  // into a white sheet: at midday the sun term alone lands past the point where
+  // the tone curve flattens, so a slope facing the sun and a slope facing away
+  // came out within a few percent of each other on screen. Pulling the albedo and
+  // the ambient down keeps the whole range inside the part of the curve that still
+  // has contrast in it, and THAT is what makes the shape of the hill visible.
+  vec3 snowAlbedo = vec3(0.685, 0.720, 0.795);
+  vec3 iceAlbedo = vec3(0.455, 0.545, 0.665);
+  vec3 rockAlbedo = vec3(0.17, 0.16, 0.155);
 
   float ice = (1.0 - smoothstep(0.06, 0.42, cond)) * pisteMask;
   float bare = (1.0 - smoothstep(0.0, 0.13, cond)) * pisteMask;
@@ -408,35 +475,63 @@ void main() {
   float rockPatch = smoothstep(0.45, 0.72, vnoise(vWorld.xz * 0.55));
   albedo = mix(albedo, rockAlbedo, bare * rockPatch);
 
+  // Snow that has been ridden over loses its bloom long before it turns to ice.
+  // A ramp this steep is what makes a single pass leave a mark you can see from
+  // the chair, rather than something that only appears after forty descents.
+  //
+  // The first attempt at this darkened by a tenth, which is about six percent
+  // once the tone curve has had it — measurably present and visually absent. A
+  // track reads because the snow in it is a DIFFERENT MATERIAL: packed, bluer,
+  // shinier, and with the tiller marks gone.
+  // A clean carve on a groomed piste is a rut about a centimetre and a half deep —
+  // measured, and correct. So the mark cannot come from the depth: it comes from
+  // the snow in it being packed, polished and stripped of tiller marks. The ramp
+  // saturates at a carve of 0.035, which is what a single pass actually leaves.
+  float track = smoothstep(0.0, 0.035, carve);
+  albedo = mix(albedo, iceAlbedo, track * 0.42);
+  albedo *= 1.0 - track * 0.09;
+
   float rough = mix(0.62, 0.13, ice);
   rough = mix(rough, 0.88, powder);
-  rough = mix(rough, rough * 0.6, smoothstep(0.15, 0.6, carve)); // polished rut walls
+  rough = mix(rough, rough * 0.55, track); // a ski polishes what it runs over
+
+  // ---- how much light can reach here at all
+  // Both of these fade out with distance: past a few hundred metres the haze has
+  // taken over anyway and the taps would be spent on pixels nobody can read.
+  float relief = 1.0 - smoothstep(260.0, 640.0, vDist);
+  float occ = 0.0, shadow = 0.0;
+  if (uDetail > 0.5 && relief > 0.01) {
+    occ = skyOcclusion(vWorld.xz, vWorld.y) * relief;
+    shadow = sunShadow(vWorld.xz, vWorld.y) * relief;
+  }
 
   // ---- lighting
   vec3 V = normalize(cameraPosition - vWorld);
   vec3 L = normalize(uSunDir);
 
   // Snow is translucent: light enters, scatters and leaves. Without wrapping the
-  // diffuse term, snow renders as white plastic — this single line is most of the
-  // difference between "snow" and "a white surface".
-  float wrap = 0.42;
+  // diffuse term, snow renders as white plastic. But wrap this wide also flattens
+  // every slope towards the same value, so it is kept just large enough to read as
+  // subsurface and no larger.
+  float wrap = 0.22;
   float ndl = (dot(N, L) + wrap) / (1.0 + wrap);
-  ndl = max(ndl, 0.0);
+  ndl = max(ndl, 0.0) * (1.0 - shadow * 0.92);
 
-  float ao = 1.0 - carve * 0.35;
+  float ao = (1.0 - carve * 0.42) * (1.0 - occ * 0.80);
   float sky = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
   vec3 ambient = mix(uGroundColour, uSkyColour, sky) * ao;
-  // Snow bounces most of what hits it, so the ambient term carries real weight.
-  ambient *= 1.32;
+  // Snow bounces a lot of what hits it, so the ambient term still carries weight —
+  // and being sky-coloured is what makes the shaded side read cold rather than grey.
+  ambient *= 0.94;
 
   vec3 diffuse = albedo * (uSunColour * ndl + ambient);
 
   vec3 F0 = mix(vec3(0.028), vec3(0.045), ice);
-  vec3 spec = ggx(N, V, L, rough, F0) * uSunColour;
+  vec3 spec = ggx(N, V, L, rough, F0) * uSunColour * (1.0 - shadow * 0.92);
 
   // Forward scattering: looking towards the sun across snow it glows.
   float fwd = pow(max(dot(-V, L), 0.0), 6.0);
-  vec3 scatter = albedo * uSunColour * fwd * 0.30 * (1.0 - ice);
+  vec3 scatter = albedo * uSunColour * fwd * 0.17 * (1.0 - ice) * (1.0 - shadow * 0.8);
 
   // Sparkle: individual crystals catching the sun. Only near, only on fresh snow.
   float sparkle = 0.0;
@@ -444,7 +539,8 @@ void main() {
     float sp = vnoise(vWorld.xz * 340.0 + floor(uTime * 3.0) * 0.0);
     sp = pow(max(sp, 0.0), 34.0);
     float align = pow(max(dot(reflect(-L, N), V), 0.0), 40.0);
-    sparkle = sp * align * 26.0 * smoothstep(0.5, 0.95, cond) * (1.0 - smoothstep(6.0, 55.0, vDist));
+    sparkle = sp * align * 15.0 * smoothstep(0.5, 0.95, cond)
+      * (1.0 - smoothstep(6.0, 55.0, vDist)) * (1.0 - shadow);
   }
 
   vec3 lampSum = vec3(0.0);
