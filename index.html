@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SKI Together</title>
+<meta name="description" content="Rent a set, ride the lift, and ski a real mountain with your friends. The snow remembers every turn.">
+<meta name="theme-color" content="#16202b">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2316202b'/><path d='M6 24 L16 7 L26 24 Z' fill='%23f2f5f8'/><path d='M11 24 L16 15 L21 24 Z' fill='%232e6fd9'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="src/ui/styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="ui"></div>
+  <noscript class="fallback">SKI Together needs JavaScript and WebGL 2.</noscript>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

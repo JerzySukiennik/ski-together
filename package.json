@@ -1,0 +1,20 @@
+{
+  "name": "ski-together",
+  "version": "1.0.0",
+  "description": "Multiplayer 3D ski resort in the browser",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node tests/terrain.test.mjs && node tests/physics.test.mjs",
+    "serve": "python3 serve.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "three": "^0.169.0"
+  }
+}
