@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Model preview</title>
+<style>
+  body { margin: 0; background: #0e141b; color: #dbe6f0; font: 13px ui-monospace, Menlo, monospace; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; padding: 8px 12px; display: flex; gap: 12px;
+         align-items: center; background: rgba(10,16,22,0.82); z-index: 2; }
+  select, button { font: inherit; background: #1b242f; color: #dbe6f0; border: 1px solid #33414f;
+                   padding: 4px 8px; border-radius: 4px; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="bar">
+  <select id="file"></select>
+  <button id="turn">turntable: on</button>
+  <button id="night">light: day</button>
+  <span id="info"></span>
+</div>
+<script type="module">
+// Look at the models.
+//
+// A model nobody has looked at is a model nobody has checked: a bounding box
+// cannot tell a spruce from a white spike, and this project has already shipped
+// a whole session's work built on a mesh that measured perfectly and was the
+// wrong thing entirely. So the generator has a viewer, it lines every object in
+// a file up in a row at true scale against a one-metre grid, and it is the last
+// step of the pipeline rather than an optional extra.
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const FILES = [
+  '../assets/models/vegetation.glb',
+  '../assets/models/lifts.glb',
+  '../assets/models/buildings.glb',
+  '../assets/models/character.glb',
+];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb6cd);
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 400);
+
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.6);
+sun.position.set(24, 34, 18);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -40; sun.shadow.camera.right = 40;
+sun.shadow.camera.top = 40; sun.shadow.camera.bottom = -40;
+scene.add(sun);
+const sky = new THREE.HemisphereLight(0xa9c6e8, 0xdfe8ef, 1.15);
+scene.add(sky);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ color: 0xdfe7ee, roughness: 0.95 }),
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// A one-metre grid, so scale is readable rather than assumed.
+const grid = new THREE.GridHelper(200, 200, 0x8aa0b4, 0xc3d0dc);
+grid.position.y = 0.002;
+grid.material.opacity = 0.5;
+grid.material.transparent = true;
+scene.add(grid);
+
+const models = new THREE.Group();
+scene.add(models);
+
+const loader = new GLTFLoader();
+let radius = 20, centre = new THREE.Vector3();
+
+function label(text, width) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 96;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = 'rgba(12,18,25,0.72)';
+  ctx.fillRect(0, 18, 512, 60);
+  ctx.font = '600 40px ui-monospace, Menlo, monospace';
+  ctx.fillStyle = '#eef4fa';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 256, 48);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  s.scale.set(width, width * 96 / 512, 1);
+  return s;
+}
+
+async function show(path) {
+  models.clear();
+  // The dev server answers 304 on mtime, and a stale GLB is a viewer that lies
+  // about the file you just rebuilt.
+  const gltf = await loader.loadAsync(`${path}?t=${Date.now()}`);
+  const objects = [...gltf.scene.children];
+  let x = 0;
+  const boxes = [];
+  for (const o of objects) {
+    o.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+    const box = new THREE.Box3().setFromObject(o);
+    const size = box.getSize(new THREE.Vector3());
+    boxes.push({ o, box, size });
+  }
+  const gap = 2.0;
+  const info = [];
+  for (const { o, box, size } of boxes) {
+    x += size.x / 2 + gap;
+    o.position.x += x - (box.min.x + box.max.x) / 2;
+    models.add(o);
+    const tag = label(o.name, Math.max(3, size.x * 1.4));
+    tag.position.set(x, box.max.y + Math.max(0.6, size.y * 0.08) + 0.5, 0);
+    models.add(tag);
+    x += size.x / 2;
+    info.push(`${o.name} ${size.x.toFixed(1)}x${size.y.toFixed(1)}x${size.z.toFixed(1)}`);
+  }
+  const whole = new THREE.Box3().setFromObject(models);
+  whole.getCenter(centre);
+  radius = Math.max(whole.getSize(new THREE.Vector3()).length() * 0.62, 4);
+  document.getElementById('info').textContent = info.join('   ');
+}
+
+const fileSel = document.getElementById('file');
+for (const f of FILES) {
+  const opt = document.createElement('option');
+  opt.value = f;
+  opt.textContent = f.split('/').pop();
+  fileSel.appendChild(opt);
+}
+fileSel.addEventListener('change', () => show(fileSel.value));
+
+let turning = true;
+document.getElementById('turn').addEventListener('click', (e) => {
+  turning = !turning;
+  e.target.textContent = `turntable: ${turning ? 'on' : 'off'}`;
+});
+document.getElementById('night').addEventListener('click', (e) => {
+  const night = sun.intensity > 1;
+  sun.intensity = night ? 0.18 : 2.6;
+  sky.intensity = night ? 0.42 : 1.15;
+  scene.background = new THREE.Color(night ? 0x141c26 : 0x9fb6cd);
+  e.target.textContent = `light: ${night ? 'night' : 'day'}`;
+});
+
+// The camera can also be driven from the console, which is how the screenshots
+// in the commit messages get taken: window.view(azimuth, elevation, zoom).
+let az = 0.7, el = 0.30, zoom = 1;
+window.view = (a = az, e2 = el, z = 1) => { az = a; el = e2; zoom = z; turning = false; };
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+renderer.setAnimationLoop((t) => {
+  if (turning) az = t * 0.00016;
+  const r = radius * zoom;
+  camera.position.set(
+    centre.x + Math.sin(az) * r * Math.cos(el),
+    centre.y + Math.sin(el) * r + 0.5,
+    centre.z + Math.cos(az) * r * Math.cos(el),
+  );
+  camera.lookAt(centre);
+  renderer.render(scene, camera);
+});
+
+await show(FILES[0]);
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, PISTE_OFF, SUMMIT_ELEV, BASE_ELEV } from '../shared/terrain.js';
+import { HALF, PISTE_OFF, SUMMIT_ELEV, BASE_ELEV, terrainUtils } from '../shared/terrain.js';
 
 // Everything standing on the mountain that is not the mountain.
 //
@@ -82,7 +82,14 @@ export function scatterTrees(terrain, sampler, count = 5200, seed = 7717, keepOu
 
     // Thinner higher up, and thinner still right at the treeline.
     const alt = (y - BASE_ELEV) / (SUMMIT_ELEV - BASE_ELEV);
-    const chance = (1 - alt * 0.55) * (1 - Math.pow(Math.max(0, (y - (TREELINE - 60)) / 60), 1.5));
+    let chance = (1 - alt * 0.55) * (1 - Math.pow(Math.max(0, (y - (TREELINE - 60)) / 60), 1.5));
+    // Forests grow in stands with clearings between them. An even sprinkle at a
+    // constant probability is the one thing a real hillside never looks like: it
+    // reads as scattering, because it is. Two octaves of the same noise the
+    // mountain is made of give the wood its own shape — dense stands, open
+    // glades, and a ragged edge where the two meet.
+    const stand = terrainUtils.fbm(x / 165, z / 165, 4471, 2) * 0.5 + 0.5;
+    chance *= 0.12 + 1.55 * terrainUtils.smoothstep(0.30, 0.72, stand);
     if (rand() > chance) continue;
 
     // Clumping: small trees crowd the bigger ones.
@@ -193,7 +200,8 @@ export class TreeField {
     // far tier: one proxy per variant, everything at once
     // Far trees are silhouettes, but a pure black silhouette against snow reads as
     // a hole in the world. This is the average of a snow-loaded spruce at range.
-    this.farMaterial = new THREE.MeshLambertMaterial({ color: 0x4a5a55 });
+    this.farMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    this._farTint = new THREE.Color();
     for (const [name, entry] of this.variants) {
       const h = entry.size.y;
       const proxy = proxyGeometry(h, entry.size.x * 0.5);
@@ -204,6 +212,12 @@ export class TreeField {
       entry.far = im;
       this.group.add(im);
       // The far tier never moves, so its matrices are written exactly once.
+      //
+      // Its colours are written once too, and they are not all the same. One
+      // flat green for six thousand proxies is what made the distant forest read
+      // as a printed pattern: a real wood at two kilometres is a texture of
+      // snow-loaded crowns, bare crowns and shadow. Per-instance colour costs one
+      // buffer and buys the whole middle distance.
       for (let i = 0; i < entry.list.length; i++) {
         const t = entry.list[i];
         this.dummy.position.set(t.x, t.y, t.z);
@@ -211,8 +225,18 @@ export class TreeField {
         this.dummy.scale.setScalar(t.scale);
         this.dummy.updateMatrix();
         im.setMatrixAt(i, this.dummy.matrix);
+        // Deterministic per-tree: same forest on every client, which matters when
+        // two people are looking at the same hillside.
+        const h = Math.abs(Math.sin(t.x * 12.9898 + t.z * 78.233) * 43758.5453) % 1;
+        const snow = 0.10 + 0.34 * h;
+        const alt = THREE.MathUtils.clamp((t.y - BASE_ELEV) / (SUMMIT_ELEV - BASE_ELEV), 0, 1);
+        this._farTint.setRGB(0.205, 0.275, 0.245)
+          .lerp(new THREE.Color(0.72, 0.79, 0.86), snow)      // snow on the crown
+          .lerp(new THREE.Color(0.44, 0.53, 0.62), alt * 0.5); // haze up high
+        im.setColorAt(i, this._farTint);
       }
       im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
       im.count = entry.list.length;
     }
 
