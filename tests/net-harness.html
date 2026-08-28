@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SKI Together — network harness</title>
+<style>
+  body { background: #10171f; color: #e6edf3; font: 14px/1.5 ui-monospace, Menlo, monospace; padding: 20px; }
+  #verdict { font-size: 20px; padding: 10px 0; }
+  .ok { color: #6ee7a8; } .bad { color: #ff8d8d; } .info { color: #9fb3c8; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<h1>Network harness</h1>
+<div id="verdict" class="info">running…</div>
+<pre id="log"></pre>
+
+<script type="module">
+// Two whole Sessions in one page, talking to each other over real WebRTC through
+// the real Firebase handshake. Everything a second machine would exercise is
+// exercised here except the network between two machines — which is exactly the
+// part STUN is for and the part a test cannot fake anyway.
+//
+// Run it with `npm run serve` and open /tests/net-harness.html.
+import { Session } from '../src/net/session.js';
+import { SnowField, SNOW_W } from '../src/shared/snowfield.js';
+
+const logEl = document.getElementById('log');
+const verdict = document.getElementById('verdict');
+const results = [];
+const log = (msg, cls = 'info') => {
+  logEl.insertAdjacentHTML('beforeend', `<span class="${cls}">${msg}</span>\n`);
+};
+const check = (name, pass, detail = '') => {
+  results.push({ name, pass });
+  log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`, pass ? 'ok' : 'bad');
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitFor(what, fn, timeout = 25000) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeout) {
+    if (fn()) return true;
+    await sleep(120);
+  }
+  log(`timed out waiting for ${what}`, 'bad');
+  return false;
+}
+
+// A mountain small enough to build twice, with a piste band down the middle so
+// the snapshot has something to compress.
+function fakeTerrain() {
+  const HRES = 64;
+  const piste = new Uint8Array(HRES * HRES);
+  for (let j = 0; j < HRES; j++) for (let i = 20; i <= 26; i++) piste[j * HRES + i] = 1;
+  return { piste };
+}
+
+function stubGame(name, jacket) {
+  const snow = new SnowField(fakeTerrain());
+  return {
+    engine: { scene: { add() {} } },
+    assets: null,
+    avatar: { kind: 'ski' },
+    state: { name, points: 12, colours: { jacket, pants: '#222', helmet: '#eee' } },
+    skier: {
+      pos: { x: 0, y: 100, z: 0 }, heading: 0, roll: 0, pitch: 0, mode: 0,
+      telemetry: { speed: 0, skid: 0 },
+    },
+    snow,
+    hud: { flash: (m) => log(`  [${name}] ${m}`) },
+  };
+}
+
+/** Scratch a square of cells the way a ski would, without any physics. */
+function carve(snow, i0, j0, value) {
+  for (let j = j0; j < j0 + 8; j++) {
+    for (let i = i0; i < i0 + 8; i++) {
+      snow.cond[j * SNOW_W + i] = value;
+      snow.carve[j * SNOW_W + i] = 200;
+    }
+  }
+  snow.markDirty(i0, j0, i0 + 7, j0 + 7);
+}
+const read = (snow, i, j) => snow.cond[j * SNOW_W + i];
+
+async function run() {
+  const hostGame = stubGame('Host', '#d94f4f');
+  const guestGame = stubGame('Guest', '#2e6fd9');
+  const host = new Session(hostGame);
+  const guest = new Session(guestGame);
+  // The avatars need real GLB models; the network does not.
+  host.animateOthers = guest.animateOthers = () => {};
+  hostGame.session = host;
+  guestGame.session = guest;
+  window.__net = { host, guest, hostGame, guestGame };
+  // Count the snow patches each side sends and receives. The count matters as
+  // much as the content: an applied patch that marks itself dirty again turns
+  // one carve into an endless echo between the two peers.
+  for (const s of [host, guest]) {
+    s.sent = 0; s.got = 0;
+    const bb = s.broadcastBulk.bind(s);
+    s.broadcastBulk = (type, payload, except) => {
+      if (type === 3) s.sent++;
+      return bb(type, payload, except);
+    };
+    const hb = s.handleBulk.bind(s);
+    s.handleBulk = (peerId, type, payload) => {
+      if (type === 3) s.got++;
+      return hb(peerId, type, payload);
+    };
+  }
+
+  check('firebase config loads', await waitFor('config', () => host.db && guest.db),
+    host.db ? `signed in as ${host.uid?.slice(0, 6)}…` : 'no db');
+  if (!host.db) return finish();
+
+  const code = await host.createRoom({ isPublic: true });
+  check('host opens a room', !!code, code || '');
+  if (!code) return finish();
+
+  const joined = await guest.joinRoom(code);
+  check('guest finds the room in the database', joined);
+
+  const connected = await waitFor('the data channels',
+    () => host.peers.size === 1 && guest.peers.size === 1
+      && [...guest.peers.values()][0].bulk?.readyState === 'open'
+      && [...host.peers.values()][0].bulk?.readyState === 'open');
+  check('WebRTC connects both ways', connected);
+  if (!connected) return finish();
+
+  check('guest sees the room list', host.rooms.some((r) => r.code === code) || guest.rooms.some((r) => r.code === code));
+
+  // The snapshot is tens of kilobytes and has to arrive whole.
+  const snapSize = hostGame.snow.snapshot().length;
+  const synced = await waitFor('the snow snapshot', () => guest.synced);
+  check(`host's snow snapshot arrives whole (${(snapSize / 1024).toFixed(1)} kB, chunked)`, synced);
+
+  let same = true;
+  for (let k = 0; k < hostGame.snow.cond.length; k += 977) {
+    if (hostGame.snow.cond[k] !== guestGame.snow.cond[k]) { same = false; break; }
+  }
+  check('the two mountains agree after the snapshot', same);
+
+  // Positions and identities, twenty times a second, both directions.
+  const tick = setInterval(() => { host.update(0.05); guest.update(0.05); }, 50);
+
+  const gotState = await waitFor('positions', () => host.remotes.size === 1 && guest.remotes.size === 1);
+  check('each side sees the other skier', gotState);
+
+  const guestOnHost = [...host.remotes.values()][0];
+  const hostOnGuest = [...guest.remotes.values()][0];
+  check('names and colours cross the wire',
+    guestOnHost?.name === 'Guest' && hostOnGuest?.name === 'Host'
+    && guestOnHost?.colour === '#2e6fd9',
+    `${guestOnHost?.name}/${guestOnHost?.colour}`);
+
+  // Snow the host carves must reach the guest…
+  carve(hostGame.snow, 1400, 1400, 40);
+  const down = await waitFor('the host patch', () => read(guestGame.snow, 1403, 1403) === 40);
+  check("the host's tracks appear on the guest's mountain", down);
+
+  // …and, the half that was missing before, snow the guest carves must reach the host.
+  carve(guestGame.snow, 1500, 1500, 30);
+  const up = await waitFor('the guest patch', () => read(hostGame.snow, 1503, 1503) === 30);
+  check("the guest's tracks appear on the host's mountain", up);
+
+  // Three on the mountain: the two guests never talk to each other directly, so
+  // everything they know about each other has to come through the host.
+  const thirdGame = stubGame('Third', '#f0c419');
+  const third = new Session(thirdGame);
+  third.animateOthers = () => {};
+  thirdGame.session = third;
+  await waitFor('the third config', () => third.db);
+  await third.joinRoom(code);
+  const tick3 = setInterval(() => third.update(0.05), 50);
+  const relayed = await waitFor('the relay',
+    () => guest.remotes.size === 2 && third.remotes.size === 2);
+  check('two guests see each other through the host', relayed,
+    `guest sees ${guest.remotes.size}, third sees ${third.remotes.size}`);
+  check('a relayed player keeps their name',
+    [...third.remotes.values()].map((r) => r.name).sort().join(',') === 'Guest,Host',
+    [...third.remotes.values()].map((r) => r.name).join(','));
+
+  carve(guestGame.snow, 1600, 1600, 20);
+  const across = await waitFor('a guest-to-guest patch',
+    () => read(thirdGame.snow, 1603, 1603) === 20);
+  check("one guest's tracks reach the other guest", across);
+
+  clearInterval(tick3);
+  await third.leaveRoom();
+
+  // One carve each way should cost a handful of packets, not a stream of them.
+  await sleep(2000);
+  check('a carve does not echo back and forth for ever',
+    host.got <= 8 && guest.got <= 8,
+    `host received ${host.got}, guest received ${guest.got}`);
+
+  // Leaving has to clean up after itself.
+  await guest.leaveRoom();
+  const gone = await waitFor('the guest to disappear', () => host.remotes.size === 0 && host.peers.size === 0, 8000);
+  check('a player who leaves is removed', gone);
+
+  clearInterval(tick);
+  await host.leaveRoom();
+  const cleared = await waitFor('the room to close', () => !host.rooms.some((r) => r.code === code), 8000);
+  check('the room is deleted from the database', cleared);
+
+  finish();
+}
+
+function finish() {
+  const bad = results.filter((r) => !r.pass).length;
+  verdict.textContent = bad
+    ? `${bad} of ${results.length} checks FAILED`
+    : `all ${results.length} checks passed`;
+  verdict.className = bad ? 'bad' : 'ok';
+  window.__netResult = { total: results.length, failed: bad, results };
+}
+
+run().catch((err) => {
+  log(`crashed: ${err && err.stack || err}`, 'bad');
+  finish();
+});
+</script>
+</body>
+</html>

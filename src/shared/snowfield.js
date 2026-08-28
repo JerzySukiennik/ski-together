@@ -85,13 +85,20 @@ export class SnowField {
     this.markAll();
   }
 
+  /**
+   * The whole field changed under us — a fresh mountain, or a snapshot from the
+   * host. The renderer has to redraw all of it, but the network must NOT hear
+   * about it: a full-field rectangle is 19 MB of raw cells, and worse, it would
+   * be merged with the next real carve and swallow it. What everyone else needs
+   * in this situation is a snapshot, which the session sends explicitly.
+   */
   markAll() {
-    this.markDirty(0, 0, SNOW_W - 1, SNOW_H - 1);
+    this.markDirty(0, 0, SNOW_W - 1, SNOW_H - 1, ['gpu']);
     this.version++;
   }
 
-  markDirty(i0, j0, i1, j1) {
-    for (const ch of ['gpu', 'net']) {
+  markDirty(i0, j0, i1, j1, channels = ['gpu', 'net']) {
+    for (const ch of channels) {
       const d = this.dirty[ch];
       if (!d) this.dirty[ch] = { i0, j0, i1, j1 };
       else {
@@ -323,7 +330,10 @@ export class SnowField {
       this.carve.set(bytes.subarray(p, p + w), row);
       p += w;
     }
-    this.markDirty(i0, j0, i0 + w - 1, j0 + h - 1);
+    // Redraw it, but do not send it back where it came from: marking the network
+    // channel here makes two peers bounce the same rectangle between them for as
+    // long as they are connected.
+    this.markDirty(i0, j0, i0 + w - 1, j0 + h - 1, ['gpu']);
   }
 }
 

@@ -160,11 +160,17 @@ reason its roofs were wrong.
 
 ## What is NOT done
 
-- **Multiplayer has never run on two machines.** There is no
-  `assets/firebase.json`, so the game deliberately runs solo and says so. Someone
-  needs to make a Firebase project, drop the web config in, and test two
-  browsers. The code path exists and the snow-sync patch format is under test,
-  but that is not the same as having run it.
+- **Multiplayer now runs, but not yet between two people on two machines.**
+  `assets/firebase.json` is filled in (shared `gzowos-games` project, our own
+  `skiTogether/` branch), the rules are deployed, and `tests/net-harness.html`
+  drives three real Sessions through a real handshake and real data channels —
+  seventeen checks, all passing. Two browser tabs of the actual game also find
+  each other, connect and report "2 on the mountain". What has NOT happened is a
+  human on one machine skiing next to a human on another, which is the only way
+  to judge how the interpolation feels and whether STUN is enough on a home
+  router (there is no TURN server, so a symmetric-NAT pair will fail to connect).
+  Note that a background browser tab is throttled, so two tabs on one screen
+  cannot be used to judge movement.
 - **The host-without-rendering mode** from the interview (weak machine hosts,
   strong machine renders) is designed but there is no `host.html`.
 - **Buildings are shells.** You walk into a zone, not a room. The models now have

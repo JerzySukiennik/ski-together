@@ -104,23 +104,54 @@ It runs at 14 m/s instead, which puts the ride at about ninety seconds.
 
 ## Playing together
 
-WebRTC peer to peer. Firebase does two things and no more: it lists the open
-rooms and carries the handshake.
+WebRTC peer to peer, in a star: every guest holds one connection, to the host, and
+the host repeats what it hears to everyone else. Firebase does two things and no
+more — it lists the open rooms and carries the handshake. It is the shared
+`gzowos-games` Realtime Database, and everything this game writes lives under
+`skiTogether/`, because `rooms/` at the top level belongs to another game.
+
+Each connection carries two channels, because the two kinds of traffic want
+opposite things:
+
+- **`ski`** — unreliable and unordered, for positions at 20 Hz. A lost packet is
+  replaced 50 ms later; re-sending it would only make the skier stutter.
+- **`snow`** — reliable and ordered, chunked into 16 kB frames, for the snapshot,
+  the snow patches and identities. A half-arrived snapshot is worse than none.
 
 The snow has one owner. The host holds the field, sends a compressed snapshot on
 join (**48 kB fresh, 166 kB after forty descents**), and streams only the cells
-that changed after that. If the host leaves, the next player picks it up with the
-copy they already have.
+that changed after that. Guests carve too, so they ship their rectangles up to the
+host, which applies them and passes them on — otherwise only the host's tracks
+would exist. If the host leaves, the next player picks it up with the copy they
+already have.
 
 **Solo is a complete game** — a room of one, with everything working.
 
-To open rooms, drop a Firebase web config into `assets/firebase.json`:
+The Firebase web config lives in `assets/firebase.json`. It is a public
+identifier, not a secret; what protects the data is `database.rules.json`.
 
-```json
-{ "apiKey": "...", "authDomain": "...", "databaseURL": "...", "projectId": "..." }
+**Deploying rules is dangerous and has a procedure.** The database is shared with
+every other Gzowo game and has one ruleset for the whole instance, so a deploy of
+your own block alone silently deletes theirs:
+
+```bash
+firebase database:get "/.settings/rules" --project gzowos-games \
+  --instance gzowos-games-default-rtdb > work/firebase/live-rules-backup.json
+node work/tools/merge-rules.mjs      # our block into a copy of the LIVE rules
+firebase deploy --only database
 ```
 
-Without it the game runs perfectly well alone and says so.
+Then read the rules back and check the other games' blocks are still there.
+
+### Testing the network
+
+`tests/net-harness.html` runs two — and then three — whole Sessions in one page,
+against the real Firebase and real WebRTC, with stub games around them. Serve the
+project and open `/tests/net-harness.html`: it opens a room, joins it, checks the
+snapshot arrives whole, that tracks travel in both directions and between two
+guests through the host, that a carve does not echo back and forth for ever, and
+that leaving cleans up. Seventeen checks, and it is the only thing here that
+exercises the wire.
 
 ## Running it
 

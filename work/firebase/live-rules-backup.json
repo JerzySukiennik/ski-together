@@ -1,0 +1,550 @@
+/*
+ * Voidworks — the FULL ruleset for gzowos-games-default-rtdb, not just Voidworks'.
+ *
+ * A Realtime Database has one ruleset for the whole instance, so deploying this file REPLACES the
+ * rules for every game that shares the database. Everything outside the "voidworks" block below is
+ * copied verbatim from the live database and belongs to the Gzowo's Games dashboard and to
+ * satisfarm / sentinelCity / ducks. Do not hand-edit those blocks here.
+ *
+ * Regenerate rather than edit:
+ *   firebase database:get "/.settings/rules" --project gzowos-games \
+ *     --instance gzowos-games-default-rtdb > work/firebase/live-rules-backup.json
+ *   node work/tools/merge-rules.mjs
+ *
+ * Voidworks' own block is authored in work/firebase/voidworks-block.json.
+ *
+ * Generated 2026-08-25 from a live backup taken the same day.
+ */
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        "meta": {
+          ".write": "auth != null",
+          "hostId": {
+            ".validate": "newData.isString() && newData.val().length <= 128"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber()"
+          }
+        },
+        "players": {
+          "$playerId": {
+            ".write": "auth != null && auth.uid === $playerId",
+            ".validate": "!newData.exists() || newData.hasChild('name')",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 32"
+            },
+            "id": {
+              ".validate": "newData.isString() && newData.val().length <= 128"
+            },
+            "joinedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "cosmetics": {
+              "hat": {
+                ".validate": "newData.isString() && newData.val().length <= 32"
+              },
+              "skin": {
+                ".validate": "newData.isString() && newData.val().length <= 32"
+              }
+            }
+          }
+        },
+        "signal": {
+          "$peerId": {
+            ".write": "auth != null"
+          }
+        },
+        "world": {
+          ".write": "auth != null && data.parent().child('meta/hostId').val() === auth.uid"
+        }
+      }
+    },
+    "wyspy": {
+      "$islandId": {
+        ".read": "auth != null",
+        "$playerId": {
+          ".write": "auth != null && $playerId.beginsWith(auth.uid + '-')",
+          ".validate": "!newData.exists() || (newData.hasChildren(['x','z']) && newData.child('x').isNumber() && newData.child('z').isNumber())",
+          "x": {
+            ".validate": "newData.isNumber() && newData.val() >= -200 && newData.val() <= 200"
+          },
+          "z": {
+            ".validate": "newData.isNumber() && newData.val() >= -200 && newData.val() <= 200"
+          },
+          "r": {
+            ".validate": "newData.isNumber()"
+          },
+          "c": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 16777215"
+          },
+          "t": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "ageBands": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.admin === true)",
+        ".write": "auth != null && auth.token.admin === true",
+        ".validate": "newData.isString() && newData.val().matches(/^(U13|13-17|18[+])$/)"
+      }
+    },
+    "friendAccess": {
+      "$uid": {
+        "$viewer": {
+          ".read": "auth != null && (auth.uid === $uid || auth.uid === $viewer || auth.token.admin === true)",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isBoolean()"
+        }
+      }
+    },
+    "presence": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.admin === true || (data.child('visibility').val() === 'friends' && root.child('friendAccess').child($uid).child(auth.uid).val() === true) || (data.child('visibility').val() === 'everyone' && root.child('ageBands').child($uid).val() !== 'U13' && root.child('ageBands').child($uid).exists()))",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.child('state').isString() && newData.child('state').val().matches(/^(online|playing|offline)$/) && newData.child('visibility').val().matches(/^(everyone|friends|nobody)$/) && newData.child('joinPrivacy').val().matches(/^(everyone|friends|nobody)$/) && (root.child('ageBands').child($uid).val() !== 'U13' || (newData.child('visibility').val() !== 'everyone' && newData.child('joinPrivacy').val() !== 'everyone'))",
+        "state": {
+          ".validate": "newData.isString()"
+        },
+        "gameId": {
+          ".validate": "newData.isString() || newData.val() === null"
+        },
+        "sessionId": {
+          ".validate": "newData.isString() || newData.val() === null"
+        },
+        "joinable": {
+          ".validate": "newData.isBoolean()"
+        },
+        "visibility": {
+          ".validate": "newData.isString()"
+        },
+        "joinPrivacy": {
+          ".validate": "newData.isString()"
+        },
+        "lastChanged": {
+          ".validate": "newData.isNumber()"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "sessions": {
+      "$sessionId": {
+        ".read": "auth != null && (data.child('hostId').val() === auth.uid || data.child('members').child(auth.uid).val() === true || root.child('friendAccess').child(data.child('hostId').val()).child(auth.uid).val() === true || auth.token.admin === true)",
+        ".write": "auth != null && ((!data.exists() && newData.child('hostId').val() === auth.uid) || (data.exists() && data.child('hostId').val() === auth.uid && newData.child('hostId').val() === auth.uid))",
+        ".validate": "newData.hasChildren(['hostId','gameId','maxPlayers']) && newData.child('maxPlayers').isNumber() && newData.child('maxPlayers').val() >= 1 && newData.child('maxPlayers').val() <= 8"
+      }
+    },
+    "waitlists": {
+      "$sessionId": {
+        "$uid": {
+          ".read": "auth != null && (auth.uid === $uid || root.child('sessions').child($sessionId).child('hostId').val() === auth.uid)",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.child('notify').val() === true",
+          "createdAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "notify": {
+            ".validate": "newData.isBoolean()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "sentinelCity": {
+      "rooms": {
+        "$code": {
+          ".read": true,
+          "meta": {
+            ".write": true,
+            ".validate": "newData.hasChildren(['createdAt', 'seed', 'hostPid'])"
+          },
+          "players": {
+            "$pid": {
+              ".write": true,
+              ".validate": "!newData.exists() || newData.hasChild('t')"
+            }
+          },
+          "crimes": {
+            ".write": true
+          },
+          "claims": {
+            "$crimeId": {
+              ".write": "!data.exists() || !newData.exists()"
+            }
+          },
+          "events": {
+            ".write": true,
+            "$pushId": {
+              ".validate": "newData.hasChildren(['t', 'type'])"
+            }
+          }
+        }
+      }
+    },
+    "satisfarm": {
+      "rooms": {
+        "$roomId": {
+          ".read": "auth != null",
+          "meta": {
+            ".write": "auth != null",
+            "hostId": {
+              ".validate": "newData.isString() && newData.val().length <= 128"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            }
+          },
+          "players": {
+            "$playerId": {
+              ".write": "auth != null && auth.uid === $playerId",
+              ".validate": "!newData.exists() || newData.hasChild('name')",
+              "name": {
+                ".validate": "newData.isString() && newData.val().length <= 32"
+              },
+              "id": {
+                ".validate": "newData.isString() && newData.val().length <= 128"
+              },
+              "joinedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "cosmetics": {
+                "hat": {
+                  ".validate": "newData.isString() && newData.val().length <= 32"
+                },
+                "skin": {
+                  ".validate": "newData.isString() && newData.val().length <= 32"
+                }
+              }
+            }
+          },
+          "signal": {
+            "$peerId": {
+              ".write": "auth != null"
+            }
+          },
+          "world": {
+            ".write": "auth != null && data.parent().child('meta/hostId').val() === auth.uid"
+          }
+        }
+      }
+    },
+    "ducks": {
+      "lobby": {
+        ".read": "auth != null",
+        "$roomId": {
+          ".write": "auth != null && (root.child('ducks/rooms/' + $roomId + '/meta/hostUid').val() === auth.uid || (!newData.exists() && !root.child('ducks/rooms/' + $roomId + '/meta/hostUid').exists()))",
+          ".validate": "newData.hasChildren(['hostUid','hostNick','players','lastSeen'])",
+          "hostUid": {
+            ".validate": "newData.val() === auth.uid"
+          },
+          "hostNick": {
+            ".validate": "newData.isString() && newData.val().length <= 24"
+          },
+          "players": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 4"
+          },
+          "lastSeen": {
+            ".validate": "newData.isNumber() && newData.val() <= now + 120000 && newData.val() >= now - 120000"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "rooms": {
+        "$roomId": {
+          ".write": "auth != null && (!data.exists() || data.child('meta/hostUid').val() === auth.uid)",
+          "meta": {
+            ".read": "auth != null",
+            ".validate": "newData.hasChildren(['hostUid','players','lastSeen'])",
+            "hostUid": {
+              ".validate": "newData.isString() && newData.val() === auth.uid"
+            },
+            "hostPid": {
+              ".validate": "newData.isString() && newData.val().length <= 160 && newData.val().beginsWith(auth.uid)"
+            },
+            "hostNick": {
+              ".validate": "newData.isString() && newData.val().length <= 24"
+            },
+            "players": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 4"
+            },
+            "public": {
+              ".validate": "newData.isBoolean()"
+            },
+            "createdAt": {
+              ".validate": "newData.isNumber() && newData.val() <= now + 120000 && newData.val() >= now - 120000"
+            },
+            "lastSeen": {
+              ".validate": "newData.isNumber() && newData.val() <= now + 120000 && newData.val() >= now - 120000"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "reservation": {
+            "slots": {
+              ".read": "auth != null",
+              "$slot": {
+                ".write": "auth != null && (!data.exists() || data.child('pid').val() === newData.child('pid').val() || data.child('ts').val() < now - 75000 || (!newData.exists() && data.child('uid').val() === auth.uid))",
+                ".validate": "newData.hasChildren(['uid','pid','ts']) && newData.child('uid').val() === auth.uid",
+                "uid": {
+                  ".validate": "newData.isString() && newData.val() === auth.uid"
+                },
+                "pid": {
+                  ".validate": "newData.isString() && newData.val().length <= 160 && newData.val().beginsWith(auth.uid)"
+                },
+                "ts": {
+                  ".validate": "newData.isNumber() && newData.val() <= now + 120000 && newData.val() >= now - 120000"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            }
+          },
+          "peers": {
+            "$slot": {
+              ".read": "auth != null && (root.child('ducks/rooms/' + $roomId + '/reservation/slots/' + $slot + '/uid').val() === auth.uid || root.child('ducks/rooms/' + $roomId + '/meta/hostUid').val() === auth.uid)",
+              ".write": "auth != null && (root.child('ducks/rooms/' + $roomId + '/reservation/slots/' + $slot + '/uid').val() === auth.uid || root.child('ducks/rooms/' + $roomId + '/meta/hostUid').val() === auth.uid)",
+              "$other": {
+                ".validate": false
+              },
+              "offer": {
+                ".validate": "newData.isString() && newData.val().length < 12000"
+              },
+              "answer": {
+                ".validate": "newData.isString() && newData.val().length < 12000"
+              },
+              "ice": {
+                "$side": {
+                  "$n": {
+                    ".validate": "($side === 'h' || $side === 'c') && newData.isString() && newData.val().length < 1200"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "refract": {
+      "rooms": {
+        "$roomId": {
+          ".read": "auth != null",
+          "meta": {
+            ".write": "auth != null",
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "level": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 256"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "seats": {
+            "$seat": {
+              ".write": "auth != null && (!data.exists() || data.val() === auth.uid || !root.child('refract/rooms/' + $roomId + '/players/' + data.val()).exists())",
+              ".validate": "newData.isString() && newData.val() === auth.uid"
+            }
+          },
+          "players": {
+            "$uid": {
+              ".write": "auth != null && (auth.uid === $uid || (!newData.exists() && data.child('t').val() < now - 90000))",
+              ".validate": "newData.hasChildren(['n','ci','x','y','t'])",
+              "n": {
+                ".validate": "newData.isString() && newData.val().length <= 16"
+              },
+              "ci": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7"
+              },
+              "x": {
+                ".validate": "newData.isNumber() && newData.val() >= -200 && newData.val() <= 1200"
+              },
+              "y": {
+                ".validate": "newData.isNumber() && newData.val() >= -200 && newData.val() <= 1200"
+              },
+              "t": {
+                ".validate": "newData.isNumber() && newData.val() <= now + 120000 && newData.val() >= now - 120000"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "optics": {
+            ".write": "auth != null && !newData.exists()",
+            "$opticId": {
+              ".write": "auth != null",
+              ".validate": "newData.hasChild('ts')",
+              "k": {
+                ".validate": "newData.isString() && newData.val().matches(/^[mp]$/)"
+              },
+              "x": {
+                ".validate": "newData.isNumber() && newData.val() >= -200 && newData.val() <= 1200"
+              },
+              "y": {
+                ".validate": "newData.isNumber() && newData.val() >= -200 && newData.val() <= 1200"
+              },
+              "a": {
+                ".validate": "newData.isNumber() && newData.val() >= -100 && newData.val() <= 100"
+              },
+              "b": {
+                ".validate": "newData.isString() && newData.val().length <= 128"
+              },
+              "ts": {
+                ".validate": "newData.isNumber() && newData.val() <= now + 120000 && newData.val() >= now - 120000"
+              },
+              "d": {
+                ".validate": "newData.isBoolean()"
+              },
+              "c": {
+                ".validate": "!newData.exists() || newData.val() === auth.uid || newData.val() === data.val()"
+              },
+              "ct": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "$other": {
+      ".read": false,
+      ".write": false
+    },
+    "voidworks": {
+      "factories": {
+        "$code": {
+          ".read": "$code.length >= 8",
+          ".write": "$code.length >= 8",
+          "presence": {
+            "$uid": {
+              ".validate": "newData.hasChildren(['n', 'at'])",
+              "n": {
+                ".validate": "newData.isString() && newData.val().length <= 16"
+              },
+              "at": {
+                ".validate": "newData.isNumber()"
+              },
+              "s": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "cursors": {
+            "$uid": {
+              ".validate": "newData.hasChildren(['p'])",
+              "p": {
+                ".validate": "newData.isString() && newData.val().length <= 64"
+              },
+              "at": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "bank": {
+            ".validate": "newData.hasChildren(['money'])",
+            "money": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "earned": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "cap": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 64"
+            },
+            "at": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "builds": {
+            "$bid": {
+              ".validate": "newData.hasChildren(['d', 'x', 'z', 'r'])",
+              "d": {
+                ".validate": "newData.isString() && newData.val().length <= 32"
+              },
+              "x": {
+                ".validate": "newData.isNumber() && newData.val() >= -64 && newData.val() <= 64"
+              },
+              "z": {
+                ".validate": "newData.isNumber() && newData.val() >= -64 && newData.val() <= 64"
+              },
+              "r": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+              },
+              "u": {
+                ".validate": "newData.isString() && newData.val().length <= 40"
+              },
+              "t": {
+                ".validate": "newData.isNumber()"
+              },
+              "s": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7"
+              },
+              "l": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "cells": {
+            "$cell": {
+              ".validate": "newData.isString() && newData.val().length <= 48"
+            }
+          },
+          "world": {
+            "seed": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "epoch": {
+              ".validate": "newData.isNumber()"
+            },
+            "host": {
+              ".validate": "newData.isString() && newData.val().length <= 40"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    }
+  }
+}
+

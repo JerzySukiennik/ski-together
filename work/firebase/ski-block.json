@@ -1,0 +1,40 @@
+{
+  "rooms": {
+    ".read": "auth != null",
+    "$code": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "public": { ".validate": "newData.isBoolean()" },
+      "host": { ".validate": "newData.isString() && newData.val().length <= 64" },
+      "name": { ".validate": "newData.isString() && newData.val().length <= 32" },
+      "players": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8" },
+      "beat": { ".validate": "newData.isNumber()" },
+      "created": { ".validate": "newData.isNumber()" },
+      "offers": {
+        "$peer": {
+          ".validate": "newData.hasChild('sdp')"
+        }
+      },
+      "answers": {
+        "$peer": {
+          ".validate": "newData.hasChild('sdp')"
+        }
+      },
+      "hostIce": {
+        "$peer": {
+          "$candidate": {
+            ".validate": "newData.hasChildren()"
+          }
+        }
+      },
+      "guestIce": {
+        "$peer": {
+          "$candidate": {
+            ".validate": "newData.hasChildren()"
+          }
+        }
+      },
+      "$other": { ".validate": false }
+    }
+  }
+}
