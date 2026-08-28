@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sky preview</title>
+<style>
+  body { margin: 0; background: #000; color: #dbe6f0; font: 13px ui-monospace, Menlo, monospace; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; padding: 6px 10px; display: flex; gap: 14px;
+         align-items: center; background: rgba(10,16,22,0.75); z-index: 2; flex-wrap: wrap; }
+  label { display: flex; gap: 6px; align-items: center; }
+  canvas { display: block; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="bar">
+  <label>hour <input id="hour" type="range" min="0" max="24" step="0.1" value="10.5"><span id="hourv">10.5</span></label>
+  <label>cloud <input id="cloud" type="range" min="0" max="1" step="0.02" value="0.72"><span id="cloudv">0.72</span></label>
+  <label>look <input id="look" type="range" min="-0.1" max="1.2" step="0.02" value="0.22"></label>
+  <label>spin <input id="spin" type="checkbox" checked></label>
+</div>
+<script type="module">
+// The sky on its own, with the sliders the game does not have.
+//
+// The follow camera always looks at the skier, so there is no way to point it at
+// the sky from inside the game — which meant the first cloud layer was tuned by
+// reloading the whole mountain and squinting at the strip above the horizon. The
+// sky is one object with no dependencies on the rest of the world, so it can be
+// looked at on its own, at any hour, in a second.
+import * as THREE from 'three';
+import { Sky } from '../src/world/sky.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 100);
+const sky = new Sky(scene, { hour: 10.5 });
+sky.paused = true;
+window.sky = sky;
+
+// A patch of snow at the bottom of the frame for scale and for the light to
+// land on: a sky judged with nothing under it is a sky judged wrong.
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(4000, 4000),
+  new THREE.MeshStandardMaterial({ color: 0xdde6ee, roughness: 0.95 }),
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -8;
+scene.add(ground);
+
+const hour = document.getElementById('hour');
+const cloud = document.getElementById('cloud');
+const look = document.getElementById('look');
+const spin = document.getElementById('spin');
+hour.addEventListener('input', () => {
+  document.getElementById('hourv').textContent = hour.value;
+  sky.setHour(+hour.value);
+});
+cloud.addEventListener('input', () => {
+  document.getElementById('cloudv').textContent = cloud.value;
+  sky.setCloudCover(+cloud.value);
+});
+sky.setCloudCover(+cloud.value);
+window.set = (h, c, l) => { hour.value = h; cloud.value = c; look.value = l; spin.checked = false;
+  sky.setHour(h); sky.setCloudCover(c); };
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+let az = 0;
+renderer.setAnimationLoop((t) => {
+  if (spin.checked) az = t * 0.00004;
+  const el = +look.value;
+  camera.position.set(0, 0, 0);
+  camera.lookAt(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
+  sky.update(0.016, t / 1000, camera.position);
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

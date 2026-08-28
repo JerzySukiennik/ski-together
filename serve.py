@@ -12,7 +12,7 @@ version query stamped on it. The URL changes when the file changes, and a URL
 that has changed cannot be answered from a cache. Nothing on disk is touched:
 the rewrite happens on the way out.
 """
-import http.server, socketserver, sys, re, os, io, mimetypes
+import http.server, socketserver, sys, re, os, io, time
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 ROOT = os.getcwd()
@@ -25,15 +25,17 @@ IMPORT_RE = re.compile(rb"""(from\s*|import\s*\(\s*)(['"])(\.{1,2}/[^'"]+?)(['"]
 SCRIPT_RE = re.compile(rb"""(<script[^>]*src=)(['"])([^'"]+?\.js)(['"])""")
 
 
-def newest_source_time(root):
-    """The newest mtime under src/ — one number that changes when any of it does."""
-    newest = 0.0
-    for dirpath, dirnames, filenames in os.walk(os.path.join(root, 'src')):
-        dirnames[:] = [d for d in dirnames if not d.startswith('.')]
-        for f in filenames:
-            if f.endswith('.js'):
-                newest = max(newest, os.path.getmtime(os.path.join(dirpath, f)))
-    return newest
+def version_stamp():
+    """A value that is different on every request.
+
+    Stamping with the newest source mtime was the obvious choice and it is not
+    enough: the browser this project is developed against caches a module under
+    its exact URL and hands it back with transferSize 0, so two loads that
+    happen to share a stamp share a stale module — including the one where you
+    just fixed the bug. A nonce costs a re-download of a few hundred kilobytes
+    of local text per reload and removes the entire class of problem.
+    """
+    return time.time_ns()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -51,13 +53,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return super().send_head()
         with open(path, 'rb') as f:
             body = f.read()
-        version = str(int(newest_source_time(ROOT))).encode()
+        version = str(version_stamp()).encode()
 
         def stamp(m):
             sep = b'&' if b'?' in m.group(3) else b'?'
             return m.group(1) + m.group(2) + m.group(3) + sep + b'v=' + version + m.group(4)
 
-        body = (IMPORT_RE if is_js else SCRIPT_RE).sub(stamp, body)
+        # HTML gets both: the <script src> that starts the graph, and any
+        # inline module that imports from src/ (the tool pages do).
+        body = IMPORT_RE.sub(stamp, body)
+        if is_html:
+            body = SCRIPT_RE.sub(stamp, body)
         self.send_response(200)
         self.send_header('Content-type', 'text/javascript' if is_js else 'text/html')
         self.send_header('Content-Length', str(len(body)))
@@ -71,5 +77,5 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 socketserver.TCPServer.allow_reuse_address = True
 with socketserver.TCPServer(('', PORT), Handler) as httpd:
-    print(f'SKI Together on http://localhost:{PORT}  (imports stamped v={int(newest_source_time(ROOT))})')
+    print(f'SKI Together on http://localhost:{PORT}  (every import stamped with a fresh version)')
     httpd.serve_forever()

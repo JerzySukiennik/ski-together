@@ -47,6 +47,12 @@ export class FollowCamera {
   }
 
   update(dt, input) {
+    // Photo mode: the camera is being driven from outside (game.photo), so the
+    // follow rig keeps its hands off it. Without this there is no way to point a
+    // camera anywhere in this game — the rig always looks at the skier, which is
+    // right while playing and useless for looking at the sky.
+    if (this.frozen) return;
+
     const s = this.skier;
 
     if (s.mode === MODE.LIFT) {

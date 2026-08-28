@@ -504,7 +504,16 @@ void main() {
   crisp *= smoothstep(0.045, 0.20, fallLen) * (1.0 - smoothstep(22.0, 75.0, vDist));
   N = normalize(N + vec3(fall.x, 0.0, fall.y) * groom * 0.065 * crisp * uDetail);
 
-  // Wind-blown micro relief everywhere, finer close up.
+  // Wind-blown relief, at two scales that behave differently with distance.
+  //
+  // The fine stuff has to fade out or it aliases into a shimmer. The BROAD
+  // drifts must not: a snowfield seen from a kilometre away is not smooth, it is
+  // a landscape of long wind-carved waves, and without them the middle distance
+  // of this game was a sheet of white paper with trees standing on it. They are
+  // metres across, so they survive any distance the camera can reach.
+  float d1 = vnoise(vWorld.xz * 0.022) - 0.5;   // ~45 m drifts
+  float d2 = vnoise(vWorld.xz * 0.075) - 0.5;   // ~13 m ripples
+  N = normalize(N + vec3(d1 * 0.30 + d2 * 0.16, 0.0, d2 * 0.22 - d1 * 0.13));
   if (uDetail > 0.5) {
     float m1 = vnoise(vWorld.xz * 2.6) - 0.5;
     float m2 = vnoise(vWorld.xz * 11.0) - 0.5;
@@ -553,6 +562,11 @@ void main() {
   float track = smoothstep(0.004, 0.045, carve);
   albedo = mix(albedo, iceAlbedo, track * 0.55);
   albedo *= 1.0 - track * 0.14;
+
+  // Snow is not one colour either. Old snow, wind-packed crust and fresh fill
+  // sit next to each other in patches tens of metres across, and a few percent
+  // of variation is the difference between a surface and a fill colour.
+  albedo *= 0.955 + 0.09 * vnoise(vWorld.xz * 0.014 + 3.7);
 
   float rough = mix(0.62, 0.13, ice);
   rough = mix(rough, 0.88, powder);

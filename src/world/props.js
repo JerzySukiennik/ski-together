@@ -8,7 +8,7 @@ import { HALF, PISTE_OFF, SUMMIT_ELEV, BASE_ELEV, terrainUtils } from '../shared
 // could ski into, and a six-face proxy for the rest of the valley. The swap
 // happens on distance and is invisible because the proxy shares the silhouette.
 
-const NEAR_RADIUS = 165; // metres — full geometry inside this
+const NEAR_RADIUS = 210; // metres — full geometry inside this
 const NEAR_BUDGET = 620; // instances of each variant kept hot
 const TREELINE = BASE_ELEV + 232;
 
@@ -141,14 +141,22 @@ export function scatterRocks(terrain, sampler, count = 420, seed = 313, keepOut 
 
 // --------------------------------------------------------------- rendering
 
-/** A six-face cone that reads as a spruce from 200 m. */
+/**
+ * The stand-in for a spruce past the near radius.
+ *
+ * One tall cone was fine while the real tree was also basically a cone. The real
+ * one is now three stacked tiers, and a single smooth cone next to it reads as a
+ * paper cut-out — so the proxy is two tiers and a stub of trunk, which is 34
+ * triangles instead of 20 and matches the silhouette it is standing in for.
+ */
 function proxyGeometry(height, radius) {
-  const geo = new THREE.ConeGeometry(radius, height * 0.82, 6, 1, false);
-  geo.translate(0, height * 0.41 + height * 0.12, 0);
-  const trunk = new THREE.CylinderGeometry(radius * 0.09, radius * 0.12, height * 0.3, 4);
-  trunk.translate(0, height * 0.15, 0);
-  const merged = mergeSimple([geo, trunk]);
-  return merged;
+  const lower = new THREE.ConeGeometry(radius, height * 0.62, 6, 1, false);
+  lower.translate(0, height * 0.31 + height * 0.10, 0);
+  const upper = new THREE.ConeGeometry(radius * 0.62, height * 0.52, 6, 1, false);
+  upper.translate(0, height * 0.26 + height * 0.46, 0);
+  const trunk = new THREE.CylinderGeometry(radius * 0.09, radius * 0.12, height * 0.24, 4);
+  trunk.translate(0, height * 0.12, 0);
+  return mergeSimple([lower, upper, trunk]);
 }
 
 function mergeSimple(geometries) {
@@ -228,11 +236,15 @@ export class TreeField {
         // Deterministic per-tree: same forest on every client, which matters when
         // two people are looking at the same hillside.
         const h = Math.abs(Math.sin(t.x * 12.9898 + t.z * 78.233) * 43758.5453) % 1;
-        const snow = 0.10 + 0.34 * h;
+        // Restrained: the first version of this tinted so far towards white that
+        // the middle distance filled up with pale cut-outs standing next to dark
+        // green trees. A snow-loaded spruce at range is still a dark tree with
+        // light on top of it.
+        const snow = 0.06 + 0.22 * h;
         const alt = THREE.MathUtils.clamp((t.y - BASE_ELEV) / (SUMMIT_ELEV - BASE_ELEV), 0, 1);
-        this._farTint.setRGB(0.205, 0.275, 0.245)
-          .lerp(new THREE.Color(0.72, 0.79, 0.86), snow)      // snow on the crown
-          .lerp(new THREE.Color(0.44, 0.53, 0.62), alt * 0.5); // haze up high
+        this._farTint.setRGB(0.150, 0.205, 0.180)
+          .lerp(new THREE.Color(0.52, 0.60, 0.66), snow)      // snow on the crown
+          .lerp(new THREE.Color(0.38, 0.46, 0.55), alt * 0.34); // haze up high
         im.setColorAt(i, this._farTint);
       }
       im.instanceMatrix.needsUpdate = true;

@@ -129,12 +129,14 @@ export class Game {
 
     this.engine.onQualityChange = (q) => {
       this.terrainMesh.setQuality(q);
+      this.sky.setQuality(q);
       this.sky.sun.shadow.mapSize.set(q.shadowSize, q.shadowSize);
       this.sky.sun.castShadow = q.shadow > 0;
       this.forest?.setDensity(q.trees);
       this.fire('quality', q);
     };
     this.terrainMesh.setQuality(this.engine.quality);
+    this.sky.setQuality(this.engine.quality);
     this.forest.setDensity(this.engine.quality.trees);
 
     this.engine.add(this);
@@ -160,6 +162,34 @@ export class Game {
     this.avatar.gear.visible = true;
     this.fire('gear', set);
     return { ok: true };
+  }
+
+  /**
+   * Put the camera somewhere and leave it there, for screenshots and for looking
+   * at what the world actually renders. `game.photo()` with no arguments hands
+   * control back to the follow camera.
+   */
+  photo(x, y, z, tx, ty, tz) {
+    if (x === undefined) {
+      this.camera.frozen = false;
+      return 'follow camera';
+    }
+    this.camera.frozen = true;
+    this.engine.camera.position.set(x, y, z);
+    this.engine.camera.lookAt(tx ?? 0, ty ?? y, tz ?? 0);
+    this.engine.camera.updateMatrixWorld(true);
+    return `camera at ${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}`;
+  }
+
+  /** Stand the camera at a point on the ground and aim it, in degrees. */
+  photoFrom(x, z, heightAboveGround = 2.2, headingDeg = 0, pitchDeg = 0) {
+    const y = this.sampler.sampleHeight(x, z) + heightAboveGround;
+    const a = headingDeg * Math.PI / 180;
+    const p = pitchDeg * Math.PI / 180;
+    return this.photo(x, y, z,
+      x + Math.sin(a) * Math.cos(p) * 100,
+      y + Math.sin(p) * 100,
+      z + Math.cos(a) * Math.cos(p) * 100);
   }
 
   spend(points) {
