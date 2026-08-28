@@ -153,6 +153,42 @@ export function cableProfile(pts, length, spans, clearance, {
   return { heights: pts.map((p) => at(p.s)), supports: sup.map((p) => p.s) };
 }
 
+/**
+ * One model, drawn many times, in one call per material.
+ *
+ * The lesson this project already learned about trees applies twice over to the
+ * lifts: 300 piste markers as separate objects cost more than 5200 instanced
+ * spruces. Rerouting the chairlift to hug the ground took its pylons from 18 to
+ * 24 and the drag's from 10 to 21, and every one of them was five separate
+ * meshes — 383 draw calls of pylons, chairs and T-bars, which was more than half
+ * the whole scene. As instances it is sixteen.
+ *
+ * Carriers move, so their matrices are rewritten every frame. That is cheap:
+ * forty-three matrices is nothing next to forty-three draw calls.
+ */
+class InstancedModel {
+  constructor(assets, name, count) {
+    this.meshes = assets.primitives(name).map(({ geometry, material }) => {
+      const im = new THREE.InstancedMesh(geometry, material, count);
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.frustumCulled = false;
+      im.name = name;
+      return im;
+    });
+  }
+
+  addTo(group) { for (const m of this.meshes) group.add(m); }
+
+  /** Write one instance from a scratch Object3D that is not in the scene. */
+  set(index, object) {
+    object.updateMatrix();
+    for (const m of this.meshes) m.setMatrixAt(index, object.matrix);
+  }
+
+  flush() { for (const m of this.meshes) m.instanceMatrix.needsUpdate = true; }
+}
+
 export class Lift {
   constructor(assets, sampler, opts) {
     const {
@@ -184,17 +220,22 @@ export class Lift {
 
     // --- pylons
     // One pylon per interior support, so every pylon is standing where the cable
-    // is actually being held up rather than near it.
+    // is actually being held up rather than near it. They never move, so their
+    // instance matrices are written once and never touched again.
+    const pylonCount = Math.max(0, this.supports.length - 2);
+    this.pylons = new InstancedModel(assets, pylonModel, pylonCount);
+    this.pylons.addTo(this.group);
+    const scratch = new THREE.Object3D();
     for (let i = 1; i < this.supports.length - 1; i++) {
       const s = this.supports[i];
       const p = this.at(s);
-      const ob = assets.instance(pylonModel);
-      ob.position.set(p.x, p.ground, p.z);
-      ob.rotation.y = Math.atan2(this.dir.x, this.dir.y);
+      scratch.position.set(p.x, p.ground, p.z);
+      scratch.rotation.set(0, Math.atan2(this.dir.x, this.dir.y), 0);
       const h = Math.max(3.5, p.cable - p.ground);
-      ob.scale.set(1, h / (kind === 'chair' ? 11.0 : 5.6), 1);
-      this.group.add(ob);
+      scratch.scale.set(1, h / (kind === 'chair' ? 11.0 : 5.6), 1);
+      this.pylons.set(i - 1, scratch);
     }
+    this.pylons.flush();
 
     // --- stations. The model's bullwheel sits BULLWHEEL_OFFSET behind its origin,
     // so the terminal is placed such that its wheel lands exactly on the end of
@@ -248,12 +289,17 @@ export class Lift {
     }
 
     // --- carriers
+    // `object` is a scratch Object3D that is NOT in the scene: everything that
+    // asks a carrier where it is keeps working, and the drawing is done by one
+    // instanced mesh per material instead of one object per chair.
     this.carriers = [];
     const n = Math.max(2, Math.floor(length / carrierSpacing));
+    this.carrierMeshes = new InstancedModel(assets, carrierModel, n);
+    this.carrierMeshes.addTo(this.group);
     for (let i = 0; i < n; i++) {
-      const ob = assets.instance(carrierModel);
-      this.group.add(ob);
-      this.carriers.push({ object: ob, s: (i / n) * (length * 2), rider: null });
+      const ob = new THREE.Object3D();
+      ob.matrixAutoUpdate = false;
+      this.carriers.push({ object: ob, s: (i / n) * (length * 2), rider: null, index: i });
     }
     this.carrierModel = carrierModel;
 
@@ -316,7 +362,9 @@ export class Lift {
       c.object.rotation.z = Math.sin(c.s * 0.09 + c.object.id) * swing;
       c.outbound = outbound;
       c.progress = outbound ? s / this.length : 1;
+      this.carrierMeshes.set(c.index, c.object);
     }
+    this.carrierMeshes.flush();
   }
 
   /** The carrier a waiting skier could step onto right now, if any. */
@@ -586,7 +634,10 @@ export class Resort {
       place('prop_flag', base.x - 34 + k * 22, base.z + 66, 0.3 + k * 0.4, 1, 'post');
     }
 
-    // snow cannons along the lower half of the red and the blue
+    // Snow cannons along the lower half of the red and the blue. Seventeen of
+    // them, four meshes each: as separate objects that was 68 draw calls for a
+    // prop nobody looks at twice, so they go in as one instanced set.
+    const cannons = [];
     for (const key of ['red', 'blue']) {
       const run = this.terrain.runs.find((r) => r.key === key);
       if (!run) continue;
@@ -597,10 +648,29 @@ export class Resort {
         const len = Math.hypot(dx, dz) || 1;
         const px = -dz / len, pz = dx / len;
         const side = (i % 68 === 0) ? 1 : -1;
-        const cx = x + px * (run.halfWidth + 2.6) * side;
-        const cz = z + pz * (run.halfWidth + 2.6) * side;
-        place('prop_cannon', cx, cz, Math.atan2(-px * side, -pz * side), 1, 'post');
+        cannons.push({
+          x: x + px * (run.halfWidth + 2.6) * side,
+          z: z + pz * (run.halfWidth + 2.6) * side,
+          rotY: Math.atan2(-px * side, -pz * side),
+        });
       }
+    }
+    if (cannons.length) {
+      const set = new InstancedModel(this.assets, 'prop_cannon', cannons.length);
+      set.addTo(this.group);
+      const size = this.assets.size('prop_cannon');
+      const scratch = new THREE.Object3D();
+      cannons.forEach((c, i) => {
+        const y = this.sampler.sampleHeight(c.x, c.z);
+        scratch.position.set(c.x, y, c.z);
+        scratch.rotation.set(0, c.rotY, 0);
+        set.set(i, scratch);
+        this.solidProps.push({
+          x: c.x, z: c.z, kind: 'prop_cannon', hard: false, top: y + size.y,
+          r: Math.max(size.x, size.z) * 0.5 * 0.75,
+        });
+      });
+      set.flush();
     }
   }
 

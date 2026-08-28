@@ -100,6 +100,18 @@ export class HUD {
     this.promptNode = el('div', 'prompt');
     this.node.appendChild(this.promptNode);
 
+    // Where to go next, with a bearing. Sits above the prompt, and both of them
+    // are silent as soon as the player stops needing them.
+    this.guideNode = el('div', 'guide');
+    this.guideArrow = svgEl('svg', { viewBox: '0 0 24 24', class: 'guide__arrow' });
+    this.guideArrow.appendChild(svgEl('path', {
+      d: 'M12 3 L19 20 L12 16 L5 20 Z', fill: 'currentColor',
+    }));
+    this.guideText = el('span', 'guide__text');
+    this.guideDist = el('span', 'guide__dist t-num');
+    this.guideNode.append(this.guideArrow, this.guideText, this.guideDist);
+    this.node.appendChild(this.guideNode);
+
     this.hint = el('div', 'clicktoplay');
     this.hint.innerHTML = '<b>Click to play</b><span>W walk · F use · mouse look</span>';
     this.node.appendChild(this.hint);
@@ -279,6 +291,22 @@ export class HUD {
       node.setAttribute('transform', `translate(0 ${this.yFor(o.y)})`);
       node.firstChild.setAttribute('fill', o.colour || '#fff');
     });
+
+    // where to go next
+    const guide = g.guide;
+    if (guide) {
+      const dx = guide.x - s.pos.x, dz = guide.z - s.pos.z;
+      const dist = Math.hypot(dx, dz);
+      // The arrow points where the thing is RELATIVE TO WHERE YOU ARE LOOKING,
+      // which is the only bearing that means anything on screen.
+      const bearing = Math.atan2(dx, dz) - g.camera.worldYaw;
+      this.guideArrow.style.transform = `rotate(${bearing}rad)`;
+      this.guideText.textContent = guide.text;
+      this.guideDist.textContent = dist > 999 ? `${(dist / 1000).toFixed(1)} km` : `${Math.round(dist)} m`;
+      this.guideNode.classList.add('guide--on');
+    } else {
+      this.guideNode.classList.remove('guide--on');
+    }
 
     // vitals
     this.coldBar.fill.style.transform = `scaleX(${Math.max(0, s.warmth)})`;

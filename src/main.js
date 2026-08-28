@@ -45,6 +45,7 @@ export class Game {
       lostGear: false,
     };
     this.prompt = null;
+    this.guide = null;
     this.railScore = 0;
     this.mode = 'menu';
   }
@@ -278,6 +279,7 @@ export class Game {
     this.forest.update(dt, elapsed, this.engine.camera);
     this.engine.renderer.toneMappingExposure = this.sky.exposure;
 
+    this.updateGuide();
     this.session.update(dt);
     this.goals.update(dt);
     this.audio.update(dt);
@@ -467,6 +469,47 @@ export class Game {
       this.fire('descent', { count: this.state.descents });
       this.hud.flash(`Run ${this.state.descents} done.`);
     }
+  }
+
+  /**
+   * What to do next, and which way it is.
+   *
+   * A player who has just loaded the game is standing in the snow in ski boots
+   * with no skis, in front of four identical brown buildings, and the game's
+   * answer to "what now" was a prompt that only appears once you are already
+   * standing in the right doorway. This is the line that gets somebody from the
+   * spawn point to their first descent: one instruction at a time, with a
+   * bearing, and it stops appearing the moment it stops being needed.
+   */
+  updateGuide() {
+    const s = this.skier;
+    const zone = (kind) => this.resort.zones.find((z) => z.kind === kind);
+    const target = (t, text) => (t ? { text, x: t.x, z: t.z } : null);
+
+    if (s.mode === MODE.LIFT || s.mode === MODE.GROOMER) { this.guide = null; return; }
+    if (this.state.lostGear) {
+      // Whichever piece landed furthest away is the one worth pointing at: walk
+      // to that and the near one is on the way.
+      let worst = null, worstD = -1;
+      for (const item of this.lostGear.items) {
+        const ob = item.object || item.mesh || item;
+        if (!ob?.position) continue;
+        const d = Math.hypot(ob.position.x - s.pos.x, ob.position.z - s.pos.z);
+        if (d > worstD) { worstD = d; worst = ob.position; }
+      }
+      this.guide = worst ? { text: 'Go back for your gear', x: worst.x, z: worst.z } : null;
+      return;
+    }
+    if (!this.equipped) {
+      this.guide = target(zone('rental'), 'Rent a set of skis');
+      return;
+    }
+    // Equipped and down in the valley: the point of the mountain is up.
+    if (this.state.descents === 0 && s.pos.y < BASE_ELEV + 40 && this.resort.chair) {
+      this.guide = { text: 'Ride the chair up', x: this.resort.chair.from.x, z: this.resort.chair.from.z };
+      return;
+    }
+    this.guide = null;
   }
 
   get altitudeFraction() {

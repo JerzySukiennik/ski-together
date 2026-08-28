@@ -10,64 +10,64 @@
 // follow your speed — and it sounds like snow, which no amount of band-passed
 // noise ever did.
 //
-// Three sources, all CORS-open and key-free:
-//   * assets/audio/    Jurek's own recordings. Listed in SOURCES like any other
-//                      entry, so dropping a file in and naming it here replaces
-//                      the downloaded one outright.
-//   * jsDelivr         Kenney's CC0 packs, pinned to a commit so a URL cannot
-//                      move under us
-//   * Wikimedia Commons for the ambiences nobody has a game-pack version of
-//
-// The previous version pointed at two Commons files that had both been moved,
-// which is why the cafe was silent: a 404 was logged and swallowed. Every URL in
-// here was checked before it was written down, and anything missing now says so
-// out loud in the console rather than quietly leaving a hole.
+// Every sound ships with the game, in assets/audio/. Nothing is fetched from a
+// third party at run time: a game that needs a CDN to make a footstep is a game
+// that is silent on a train, and the last time a remote file moved the cafe went
+// quiet and a 404 was logged and swallowed. Anything still missing says so out
+// loud in the console AND on screen.
 
+// Every file lives in assets/audio/. They used to be fetched from a CDN and from
+// Wikimedia on every load, which meant three megabytes over the wire before the
+// first footstep, no sound at all on a bad connection, and a game that stopped
+// working the day somebody moved a file. The remote URL each one came from is
+// recorded beside it, so the provenance is in the source rather than in
+// somebody's memory, and assets/audio/ATTRIBUTION.md carries the licences.
+const LOCAL = 'assets/audio';
 const KENNEY = 'https://cdn.jsdelivr.net/gh/Cy4nWare/sfx-api@ab0ae1c1de5a872e9989a87323a42e2100533032/sounds';
 const COMMONS = 'https://upload.wikimedia.org/wikipedia/commons';
 
 /**
- * name -> one url, or several for a sound that must not repeat identically.
- * Anything with a `local` is looked for in assets/audio first.
+ * name -> one entry, or several for a sound that must not repeat identically.
+ * Each entry is the local file the game plays, and the URL it was taken from.
  */
 const SOURCES = {
   // --- footfalls, one per surface
   step_snow: [
-    `${KENNEY}/impact-sounds/footstep-snow-000.ogg`,
-    `${KENNEY}/impact-sounds/footstep-snow-001.ogg`,
-    `${KENNEY}/impact-sounds/footstep-snow-002.ogg`,
-    `${KENNEY}/impact-sounds/footstep-snow-003.ogg`,
+    { local: `${LOCAL}/step-snow-0.ogg`, from: `${KENNEY}/impact-sounds/footstep-snow-000.ogg` },
+    { local: `${LOCAL}/step-snow-1.ogg`, from: `${KENNEY}/impact-sounds/footstep-snow-001.ogg` },
+    { local: `${LOCAL}/step-snow-2.ogg`, from: `${KENNEY}/impact-sounds/footstep-snow-002.ogg` },
+    { local: `${LOCAL}/step-snow-3.ogg`, from: `${KENNEY}/impact-sounds/footstep-snow-003.ogg` },
   ],
-  step_hard: [`${KENNEY}/impact-sounds/footstep-wood-000.ogg`],
+  step_hard: [{ local: `${LOCAL}/step-wood.ogg`, from: `${KENNEY}/impact-sounds/footstep-wood-000.ogg` }],
 
   // --- impacts
-  crash: [`${KENNEY}/impact-sounds/impactpunch-heavy-000.ogg`],
-  land: [`${KENNEY}/impact-sounds/impactsoft-medium-002.ogg`],
-  land_hard: [`${KENNEY}/impact-sounds/impactsoft-heavy-001.ogg`],
-  bump: [`${KENNEY}/impact-sounds/impactwood-medium-000.ogg`],
-  clang: [`${KENNEY}/impact-sounds/impactmetal-light-000.ogg`],
+  crash: [{ local: `${LOCAL}/crash.ogg`, from: `${KENNEY}/impact-sounds/impactpunch-heavy-000.ogg` }],
+  land: [{ local: `${LOCAL}/land.ogg`, from: `${KENNEY}/impact-sounds/impactsoft-medium-002.ogg` }],
+  land_hard: [{ local: `${LOCAL}/land-hard.ogg`, from: `${KENNEY}/impact-sounds/impactsoft-heavy-001.ogg` }],
+  bump: [{ local: `${LOCAL}/bump.ogg`, from: `${KENNEY}/impact-sounds/impactwood-medium-000.ogg` }],
+  clang: [{ local: `${LOCAL}/clang.ogg`, from: `${KENNEY}/impact-sounds/impactmetal-light-000.ogg` }],
 
   // --- interface and events
-  click: [`${KENNEY}/interface-sounds/click-001.ogg`],
-  gate: [`${KENNEY}/interface-sounds/confirmation-001.ogg`],
-  blocked: [`${KENNEY}/interface-sounds/error-002.ogg`],
-  board: [`${KENNEY}/interface-sounds/drop-002.ogg`],
-  trick: [`${KENNEY}/music-jingles/hit-jingles-jingles-hit03.ogg`],
-  trick_big: [`${KENNEY}/music-jingles/hit-jingles-jingles-hit06.ogg`],
+  click: [{ local: `${LOCAL}/click.ogg`, from: `${KENNEY}/interface-sounds/click-001.ogg` }],
+  gate: [{ local: `${LOCAL}/gate.ogg`, from: `${KENNEY}/interface-sounds/confirmation-001.ogg` }],
+  blocked: [{ local: `${LOCAL}/blocked.ogg`, from: `${KENNEY}/interface-sounds/error-002.ogg` }],
+  board: [{ local: `${LOCAL}/board.ogg`, from: `${KENNEY}/interface-sounds/drop-002.ogg` }],
+  trick: [{ local: `${LOCAL}/trick.ogg`, from: `${KENNEY}/music-jingles/hit-jingles-jingles-hit03.ogg` }],
+  trick_big: [{ local: `${LOCAL}/trick-big.ogg`, from: `${KENNEY}/music-jingles/hit-jingles-jingles-hit06.ogg` }],
 
   // --- the continuous world
-  // One wind recording drives two things: the wind past your ears, and — pitched
-  // up and band-passed — the edge running on snow. Both are the same physics and
-  // it is the same broadband hiss, which is why one recording covers them.
-  wind: [`${COMMONS}/f/f3/Wind_in_Swedish_pine_forest_at_25_mps.ogg`],
-  fire: [`${COMMONS}/b/b1/Campfire_sound_ambience.ogg`],
-  crowd: [`${COMMONS}/d/d1/Carbon_Market_at_Night_in_Cebu_City.ogg`],
-  diesel: [`${COMMONS}/3/3c/Detroit62.ogg`],
-  chairlift: [{ local: 'assets/audio/chairlift.mp3' }],
+  // One wind recording drives three things: the wind past your ears, the edge
+  // running on snow (pitched up and band-passed) and the mountain's own bed
+  // (slowed right down). Both of the first two are the same broadband hiss.
+  wind: [{ local: `${LOCAL}/wind.ogg`, from: `${COMMONS}/f/f3/Wind_in_Swedish_pine_forest_at_25_mps.ogg` }],
+  fire: [{ local: `${LOCAL}/fire.ogg`, from: `${COMMONS}/b/b1/Campfire_sound_ambience.ogg` }],
+  crowd: [{ local: `${LOCAL}/crowd.ogg`, from: `${COMMONS}/d/d1/Carbon_Market_at_Night_in_Cebu_City.ogg` }],
+  diesel: [{ local: `${LOCAL}/diesel.ogg`, from: `${COMMONS}/3/3c/Detroit62.ogg` }],
+  chairlift: [{ local: `${LOCAL}/chairlift.mp3` }],
   // Jurek's track. The spec puts music in two places and nowhere else: the menu,
   // and inside the cafe. A mountain with a soundtrack over it stops being a
   // mountain.
-  music: [{ local: 'assets/audio/music.mp3' }],
+  music: [{ local: `${LOCAL}/music.mp3` }],
 };
 
 export class GameAudio {
@@ -121,7 +121,15 @@ export class GameAudio {
         try {
           out.push(await fetchOne(url));
         } catch (err) {
-          this.missing.push(`${name} (${err.message})`);
+          // The local copy is the one the game ships with; the remote is only a
+          // fallback for a working tree where the file has not been fetched.
+          try {
+            if (!entry.from) throw err;
+            out.push(await fetchOne(entry.from));
+            console.warn(`[audio] ${name}: local file missing, fell back to ${entry.from}`);
+          } catch (err2) {
+            this.missing.push(`${name} (${err2.message})`);
+          }
         }
       }
       if (out.length) this.buffers.set(name, out);
@@ -179,6 +187,21 @@ export class GameAudio {
 
     this.fireNode = this.makeLoop('fire');
     if (this.fireNode) this.fireNode.gain.gain.value = 0;
+
+    // The bullwheel. A lift terminal is the loudest thing on a mountain and the
+    // game had it silent unless you were sitting on the chair: you could stand a
+    // metre from a turning wheel the size of a car and hear nothing but wind.
+    // Same diesel recording, slowed right down and with the top taken off, which
+    // is what a gearbox under load sounds like from twenty metres.
+    this.machineNode = this.makeLoop('diesel', { rate: 0.42 });
+    if (this.machineNode) {
+      this.machineFilter = ctx.createBiquadFilter();
+      this.machineFilter.type = 'lowpass';
+      this.machineFilter.frequency.value = 210;
+      this.machineNode.gain.disconnect();
+      this.machineNode.gain.connect(this.machineFilter).connect(this.master);
+      this.machineNode.gain.gain.value = 0;
+    }
     this.engineNode = this.makeLoop('diesel', { rate: 1 });
     if (this.engineNode) this.engineNode.gain.gain.value = 0;
   }
@@ -284,6 +307,18 @@ export class GameAudio {
         level = Math.max(0, 1 - d / 22) * 0.34;
       }
       ramp(this.fireNode.gain.gain, level, 0.3);
+    }
+
+    // --- lift machinery, loudest at the terminal and audible well before it
+    if (this.machineNode) {
+      let level = 0;
+      for (const lift of g.resort.lifts) {
+        for (const end of [lift.from, lift.to]) {
+          const d = Math.hypot(g.skier.pos.x - end.x, g.skier.pos.z - end.z);
+          level = Math.max(level, (1 - Math.min(1, d / 55)) * (lift.kind === 'chair' ? 0.30 : 0.18));
+        }
+      }
+      ramp(this.machineNode.gain.gain, level, 0.4);
     }
 
     // --- footsteps, one crunch per stride, on whatever is underfoot

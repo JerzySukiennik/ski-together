@@ -1095,3 +1095,34 @@ kbd {
 .goal--done .goal__fill { background: var(--sun); }
 .goal--done .goal__count::after { content: ' ✓'; color: var(--sun); }
 .goal--blocked { opacity: 0.55; }
+
+/* ---------------------------------------------------------------- next step
+
+   One line, above the interaction prompt, with an arrow that points at the
+   thing. It exists for the first two minutes of a session and then never
+   appears again, so it is quiet: no plate, no border, just type on the snow
+   with enough shadow to survive on white. */
+.guide {
+  position: absolute;
+  left: 50%;
+  /* Above the click-to-play card, which sits in the middle of the bottom edge
+     and would otherwise cover this entirely until the pointer is locked. */
+  bottom: 178px;
+  transform: translateX(-50%) translateY(6px);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 13px;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--snow);
+  font-family: var(--body);
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+.guide--on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.guide__arrow { width: 15px; height: 15px; color: var(--sun); transition: transform 90ms linear; }
+.guide__dist { color: var(--corduroy); font-size: 12px; }
