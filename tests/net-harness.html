@@ -76,6 +76,9 @@ function stubGame(name, jacket) {
     },
     snow,
     hud: { flash: (m) => log(`  [${name}] ${m}`) },
+    // The day's work is summed from what every player broadcasts, so the wire
+    // format for it is worth a check of its own.
+    goals: { tally: { groom: 0, fresh: 0, tricks: 0, gates: 0, vertical: 0, black: 0, together: 0 } },
   };
 }
 
@@ -171,6 +174,19 @@ async function run() {
   carve(guestGame.snow, 1500, 1500, 30);
   const up = await waitFor('the guest patch', () => read(hostGame.snow, 1503, 1503) === 30);
   check("the guest's tracks appear on the host's mountain", up);
+
+  // The shared goal board: each player broadcasts their own tally and everyone
+  // adds up the same numbers, so the tallies have to arrive both ways.
+  hostGame.goals.tally.groom = 1200;
+  guestGame.goals.tally.tricks = 7;
+  const tallies = await waitFor('the tallies', () => {
+    const onHost = [...host.remotes.values()][0]?.tally;
+    const onGuest = [...guest.remotes.values()][0]?.tally;
+    return onHost?.tricks === 7 && onGuest?.groom === 1200;
+  }, 9000);
+  check("each side gets the other's contribution to the day's work", tallies,
+    `host saw ${JSON.stringify([...host.remotes.values()][0]?.tally)}, `
+    + `guest saw ${JSON.stringify([...guest.remotes.values()][0]?.tally)}`);
 
   // Three on the mountain: the two guests never talk to each other directly, so
   // everything they know about each other has to come through the host.

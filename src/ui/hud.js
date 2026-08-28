@@ -39,6 +39,10 @@ export class HUD {
   mount() {
     this.root.appendChild(this.node);
     this.buildRail();
+    if (this.game.goals) {
+      this.game.goals.onChange = () => this.drawGoals();
+      this.drawGoals();
+    }
   }
 
   build() {
@@ -80,6 +84,14 @@ export class HUD {
     this.board.append(head, this.pointsValue, this.roster);
     this.node.appendChild(this.board);
 
+    // ---- the day's work: three shared goals, under the score
+    this.goalBox = el('div', 'goals');
+    this.goalHead = el('div', 'goals__head');
+    this.goalHead.append(el('span', 't-label', "The day's work"), el('span', 'goals__who t-num', ''));
+    this.goalList = el('ul', 'goals__list');
+    this.goalBox.append(this.goalHead, this.goalList);
+    this.node.appendChild(this.goalBox);
+
     // ---- transient
     this.trick = el('div', 'trick');
     this.node.appendChild(this.trick);
@@ -94,6 +106,38 @@ export class HUD {
 
     this.debug = el('div', 'debug');
     this.node.appendChild(this.debug);
+  }
+
+  /**
+   * The shared board. Redrawn only when something changes, because it is three
+   * lines of text that would otherwise be rebuilt sixty times a second.
+   */
+  drawGoals() {
+    const board = this.game.goals;
+    if (!board) return;
+    const rows = board.rows();
+    this.goalHead.lastChild.textContent = board.headcount > 1 ? `${board.headcount} on the hill` : 'solo';
+    if (rows.length !== this.goalList.childElementCount) {
+      this.goalList.textContent = '';
+      for (const _ of rows) {
+        const li = el('li', 'goal');
+        const line = el('div', 'goal__line');
+        line.append(el('span', 'goal__text'), el('span', 'goal__count t-num'));
+        const track = el('div', 'goal__track');
+        track.appendChild(el('i', 'goal__fill'));
+        li.append(line, track);
+        this.goalList.appendChild(li);
+      }
+    }
+    rows.forEach((r, i) => {
+      const li = this.goalList.children[i];
+      if (!li) return;
+      li.classList.toggle('goal--done', r.done);
+      li.classList.toggle('goal--blocked', !!r.blocked);
+      li.firstChild.children[0].textContent = r.text;
+      li.firstChild.children[1].textContent = r.blocked ? 'needs company' : r.detail;
+      li.lastChild.firstChild.style.transform = `scaleX(${r.fraction})`;
+    });
   }
 
   makeBar(label, kind) {

@@ -19,6 +19,7 @@ import { HUD } from './ui/hud.js';
 import { Panels } from './ui/panels.js';
 import { GameAudio } from './audio/audio.js';
 import { Session } from './net/session.js';
+import { GoalBoard } from './game/goals.js';
 import { MainMenu } from './ui/menu.js';
 
 export class Game {
@@ -126,6 +127,8 @@ export class Game {
     this.panels = new Panels(this.uiRoot, this);
     this.audio = new GameAudio(this);
     this.session = new Session(this);
+    // The reason to be in a room with somebody rather than beside them.
+    this.goals = new GoalBoard(this);
 
     this.engine.onQualityChange = (q) => {
       this.terrainMesh.setQuality(q);
@@ -276,6 +279,7 @@ export class Game {
     this.engine.renderer.toneMappingExposure = this.sky.exposure;
 
     this.session.update(dt);
+    this.goals.update(dt);
     this.audio.update(dt);
     this.hud.update(dt);
 

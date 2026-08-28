@@ -23,6 +23,9 @@ IMPORT_RE = re.compile(rb"""(from\s*|import\s*\(\s*)(['"])(\.{1,2}/[^'"]+?)(['"]
 # stamping only the imports inside it leaves the whole graph stale behind a stale
 # root, which looks exactly like "my edit did nothing".
 SCRIPT_RE = re.compile(rb"""(<script[^>]*src=)(['"])([^'"]+?\.js)(['"])""")
+# The stylesheet is cached just as hard as the modules, and a HUD panel that
+# renders as an unstyled list looks like a broken layout rather than a stale file.
+LINK_RE = re.compile(rb"""(<link[^>]*href=)(['"])([^'"]+?\.css)(['"])""")
 
 
 def version_stamp():
@@ -64,6 +67,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         body = IMPORT_RE.sub(stamp, body)
         if is_html:
             body = SCRIPT_RE.sub(stamp, body)
+            body = LINK_RE.sub(stamp, body)
         self.send_response(200)
         self.send_header('Content-type', 'text/javascript' if is_js else 'text/html')
         self.send_header('Content-Length', str(len(body)))

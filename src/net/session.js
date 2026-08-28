@@ -35,6 +35,7 @@ const MSG = {
   SNOW_SNAPSHOT: 4,
   EMOTE: 5,
   LEAVE: 7,
+  TALLY: 8,
 };
 
 // Root of everything this game writes. The Realtime Database is shared with the
@@ -493,7 +494,7 @@ export class Session {
   handleBulk(peerId, type, payload) {
     // Everything that is not snow is a JSON message; the frame type only says
     // that, and the real message type lives inside the JSON.
-    if (type === MSG.IDENTITY || type === MSG.EMOTE || type === MSG.LEAVE) {
+    if (type === MSG.IDENTITY || type === MSG.EMOTE || type === MSG.LEAVE || type === MSG.TALLY) {
       this.handleText(peerId, decodeText(payload));
       return;
     }
@@ -548,6 +549,11 @@ export class Session {
       r.points = msg.p;
       r.seen = performance.now();
       if (this.isHost) this.broadcastLive(text, peerId);
+    } else if (msg.t === MSG.TALLY) {
+      // What this player has contributed to the day's work. Everyone keeps
+      // everyone's, and every client adds up the same numbers.
+      this.remote(id).tally = msg.c;
+      if (this.isHost) this.relay(peerId, text);
     } else if (msg.t === MSG.LEAVE) {
       this.dropRemote(msg.id);
     }
@@ -592,6 +598,23 @@ export class Session {
           m: s.mode, v: +s.telemetry.speed.toFixed(1), k: +(s.telemetry.skid || 0).toFixed(2),
         },
       }));
+
+      // The day's work: small, once a second, and reliable — a lost tally would
+      // make the shared board twitch backwards.
+      //
+      // Timed off the CLOCK, not off a count of ticks. Counting ticks assumes
+      // the loop runs at the rate it was designed for, and it does not: a
+      // background tab throttles to about 1 Hz, which turned "once a second"
+      // into once every twenty seconds and made the shared board look broken.
+      const now = performance.now();
+      if (now - (this._lastTally || 0) >= 1000) {
+        this._lastTally = now;
+        const tally = this.game.goals?.tally;
+        if (tally) {
+          const payload = textBytes(JSON.stringify({ t: MSG.TALLY, id: this.id, c: tally }));
+          for (const peer of this.peers.values()) this.sendBulk(peer, MSG.TALLY, payload);
+        }
+      }
 
       // Everyone carves, so everyone ships their rectangle. Guests hold theirs
       // back until the host's snapshot has landed, or they would be pushing a
