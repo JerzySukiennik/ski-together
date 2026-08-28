@@ -247,7 +247,13 @@ export class TreeField {
   setDensity(scale) {
     this.densityScale = scale;
     for (const [, entry] of this.variants) {
-      entry.far.count = Math.floor(entry.list.length * THREE.MathUtils.clamp(scale, 0.2, 1.4));
+      // Never past what was allocated. The quality presets go up to 1.4, the far
+      // mesh only ever had room for the trees that exist, and a count past the
+      // buffer is a GL_INVALID_OPERATION on every draw of every frame — which is
+      // exactly what filled the console until Chrome stopped listening.
+      const capacity = entry.far.instanceMatrix.count;
+      entry.far.count = Math.min(capacity,
+        Math.floor(entry.list.length * THREE.MathUtils.clamp(scale, 0.2, 1.4)));
     }
     this.lastCentre.set(1e9, 0, 1e9);
   }

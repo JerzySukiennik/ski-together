@@ -481,29 +481,43 @@ function applyFeatureTerrain(height, piste, features, ctx) {
     // Takeoff angle is what throws you; height is what makes it look like a jump.
     // Both scale with size, and the ramp length falls out of the two, so every
     // kicker is a believable 6 m of run-up with a steeper lip the bigger it gets.
-    const grade = 0.20 + 0.14 * f.size;
-    const rise = Math.min(1.2 + 0.9 * f.size, 3.2);
-    const rampLen = rise / grade;
+    //
+    // And "up relative to the slope" has to be measured, not assumed. The ramp
+    // is ADDED to ground that is already falling away, so a fixed gradient of
+    // 0.46 laid on the black's 0.70 fall line still points downhill: the biggest
+    // kicker in the game launched nobody, and gave less air than the smallest one
+    // on the blue. The lip angle below is above HORIZONTAL, and the fall line it
+    // has to overcome is sampled from the carved terrain right here.
+    const [dirX, dirZ] = f.dir;
+    const groundAt = (x, z) => height[idx(clamp(toI(x), 0, HRES - 1), clamp(toJ(z), 0, HRES - 1))];
+    const back = groundAt(f.x - dirX * 6, f.z - dirZ * 6);
+    const front = groundAt(f.x + dirX * 2, f.z + dirZ * 2);
+    const fall = Math.max(0, (back - front) / 8); // downhill gradient, positive
+    // Lip angle above horizontal: 10 degrees for the smallest, about 23 for the
+    // biggest. That is what a real takeoff is built to, whatever it stands on.
+    const lip = 0.18 + 0.12 * f.size;
+    const grade = fall + lip;
+    const rise = Math.min(1.1 + 0.85 * f.size, 3.1);
+    const rampLen = clamp(rise / grade, 3.0, 8.0);
     const halfW = 4.6 * f.size + 1.2;
     const reach = rampLen + halfW + 6;
     const i0 = Math.max(0, toI(f.x - reach)), i1 = Math.min(HRES - 1, toI(f.x + reach));
     const j0 = Math.max(0, toJ(f.z - reach)), j1 = Math.min(HRES - 1, toJ(f.z + reach));
-    const [dx, dz] = f.dir;
     for (let j = j0; j <= j1; j++) {
       const pz = cellZ(j);
       for (let i = i0; i <= i1; i++) {
         const px = cellX(i);
         const rx = px - f.x, rz = pz - f.z;
-        const along = rx * dx + rz * dz; // + is downhill
-        const across = -rx * dz + rz * dx;
+        const along = rx * dirX + rz * dirZ; // + is downhill
+        const across = -rx * dirZ + rz * dirX;
         if (along > 2.6 || along < -rampLen - 2 || Math.abs(across) > halfW + 2) continue;
         const t = clamp((along + rampLen) / rampLen, 0, 1);
         const lateral = 1 - smoothstep(halfW - 2.2, halfW, Math.abs(across));
         // Full height AT the lip, then back to the natural slope over a couple of
         // metres. Cutting the top off the ramp is what makes a jump not jump.
-        const lip = 1 - smoothstep(0.0, 2.2, along);
+        const crest = 1 - smoothstep(0.0, 2.2, along);
         // Quadratic ramp — a takeoff that actually throws you up, not a speed bump.
-        const h = rise * t * t * lateral * lip;
+        const h = rise * t * t * lateral * crest;
         if (h <= 0.001) continue;
         const k = idx(i, j);
         height[k] += h;
@@ -552,6 +566,42 @@ export function makeSampler(terrain) {
   }
 
   return { sampleHeight, sampleNormal, samplePiste, sampleSlope };
+}
+
+/**
+ * How far this point lies OUTSIDE the groomed corridor of the nearest run, in
+ * metres. Negative means it is inside a run; 0 is the corridor edge.
+ *
+ * The piste mask cannot answer this question. It is a painted raster with a
+ * feathered shoulder, so "is this cell piste" is true well beyond the part
+ * anybody skis, and asking it is what left the chairlift with nowhere to put a
+ * pylon for four hundred metres at a time. A distance to the centre line is what
+ * a lift engineer actually works with: pylons stand clear of the corridor,
+ * padded, at its edge — which is what every real lift does and what makes the
+ * rope hug the ground instead of flying over it.
+ */
+export function runCorridorClearance(terrain, x, z) {
+  let best = Infinity;
+  for (const run of terrain.runs) {
+    const line = run.line;
+    let d2 = Infinity;
+    for (let n = 0; n < line.length - 1; n++) {
+      const ax = line[n][0], az = line[n][1];
+      const dx = line[n + 1][0] - ax, dz = line[n + 1][1] - az;
+      const len2 = dx * dx + dz * dz || 1;
+      let t = ((x - ax) * dx + (z - az) * dz) / len2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const qx = ax + dx * t, qz = az + dz * t;
+      const dd = (x - qx) * (x - qx) + (z - qz) * (z - qz);
+      if (dd < d2) d2 = dd;
+    }
+    const clear = Math.sqrt(d2) - run.halfWidth;
+    if (clear < best) best = clear;
+  }
+  // The nursery is a rectangle of beginners falling over. Nothing hard goes in it.
+  const nx = Math.abs(x - NURSERY.cx) - NURSERY.halfW;
+  const nz = Math.abs(z - NURSERY.cz) - NURSERY.halfL;
+  return Math.min(best, Math.max(nx, nz));
 }
 
 export const terrainUtils = { clamp, smoothstep, mix, fbm, valueNoise, hash2, polylineLength, smoothLine, resample };
